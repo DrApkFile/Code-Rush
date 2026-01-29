@@ -1,0 +1,224 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+    
+    function isValidNewUser() {
+      return request.resource.data.keys().hasAll(['uid', 'username', 'email', 'languageRatings', 'createdAt', 'updatedAt']) &&
+        request.resource.data.uid == request.auth.uid;
+    }
+
+    function isValidRating() {
+      return request.resource.data.keys().hasAll(['HTML', 'CSS', 'JavaScript']) &&
+        request.resource.data.HTML is number &&
+        request.resource.data.CSS is number &&
+        request.resource.data.JavaScript is number;
+    }
+
+    function isValidChallenge() {
+      return request.resource.data.keys().hasAll(['creatorId', 'creatorUsername', 'mode', 'language', 'questionFormat', 'isRated', 'status', 'createdAt']) &&
+        request.resource.data.creatorId == request.auth.uid;
+    }
+
+    function isValidMatch() {
+      return request.resource.data.keys().hasAll(['player1', 'questions', 'mode', 'language', 'status', 'createdAt']) &&
+        (request.resource.data.player1.uid == request.auth.uid || 
+         (request.resource.data.player2 != null && request.resource.data.player2.uid == request.auth.uid));
+    }
+
+    // Validate a new game session. 'format' is optional and startTime may be a serverTimestamp.
+    function isValidGameSession() {
+      let requiredFields = ['userId', 'mode', 'language', 'status'];
+      let validMode = request.resource.data.mode in ['3min', '5min', 'survival'];
+      let validLanguage = request.resource.data.language in ['HTML', 'CSS', 'JavaScript'];
+      let validStatus = request.resource.data.status in ['in_progress', 'completed', 'abandoned'];
+
+      return request.resource.data.keys().hasAll(requiredFields) &&
+        validMode &&
+        validLanguage &&
+        validStatus &&
+        request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Allow reading individual user profiles and searching
+      allow get, list: if true;  // Allow all reads for login and search
+      
+      // Allow creating new user profile during signup
+      allow create: if request.resource.data.keys().hasAll(['uid', 'username', 'email', 'languageRatings', 'createdAt', 'updatedAt']) &&
+                   request.resource.data.uid == request.auth.uid;
+      
+      // Allow updating own profile
+      allow update: if isAuthenticated() && 
+                   isOwner(userId) &&
+                   request.resource.data.diff(resource.data).affectedKeys()
+                     .hasAny(['bio', 'profilePicture', 'languageRatings', 'updatedAt']);
+      
+      // Allow deleting own profile
+      allow delete: if isAuthenticated() && isOwner(userId);
+    }
+
+    // Friends collection
+    match /friends/{friendId} {
+      // Allow reading accepted friendships to any authenticated user so public
+      // friend lists and counts can be shown, while keeping pending/other
+      // docs visible only to the involved parties.
+      allow get: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid || resource.data.friendId == request.auth.uid || resource.data.status == 'accepted');
+
+      // list queries may return multiple documents; allow listing only when
+      // the documents are accepted friendships or involve the requesting user.
+      allow list: if isAuthenticated() &&
+        (resource.data.status == 'accepted' || resource.data.userId == request.auth.uid || resource.data.friendId == request.auth.uid);
+
+      allow create: if isAuthenticated() && 
+        (request.resource.data.userId == request.auth.uid || 
+         request.resource.data.friendId == request.auth.uid) &&
+        request.resource.data.keys().hasAll(['userId', 'friendId', 'status', 'createdAt']);
+
+      allow update: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || 
+         resource.data.friendId == request.auth.uid) &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'acceptedAt']);
+
+      allow delete: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || 
+         resource.data.friendId == request.auth.uid);
+    }
+
+    // Game sessions collection
+    match /game_sessions/{sessionId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid);
+      // Allow listing sessions only when filtered by the requesting userId
+      allow list: if isAuthenticated() && request.query.userId == request.auth.uid;
+      // Allow create when the requester is authenticated and the declared userId
+      // matches the authenticated uid. Validate mode/language/status values but
+      // avoid strict key-list checks which can reject documents with additional
+      // helper fields (timestamps/serverTimestamps, arrays, etc.). This is a
+      // pragmatic allowance to reduce 'insufficient permissions' failures from
+      // client-side game session creation while still guarding identity and
+      // core field values.
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.mode in ['3min', '5min', 'survival'] &&
+        request.resource.data.language in ['HTML', 'CSS', 'JavaScript'] &&
+        request.resource.data.status in ['in_progress', 'completed', 'abandoned'];
+      allow update: if isAuthenticated() &&
+        resource.data.userId == request.auth.uid &&
+        resource.data.status != 'completed' &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['endTime', 'score', 'correctAnswers', 'strikes', 
+                   'status', 'questions', 'questionsAnswered', 'timeLeft',
+                   'wrongAnswers', 'accuracy', 'currentQuestionIndex', 'answers', 'gameOver']);
+      allow delete: if false;
+    }
+
+
+
+    // Matches collection - for both friend and random matchmaking
+    match /matches/{matchId} {
+      allow read: if isAuthenticated() &&
+        (resource.data.player1.uid == request.auth.uid || 
+         (resource.data.player2 != null && resource.data.player2.uid == request.auth.uid));
+      allow create: if isAuthenticated() && isValidMatch();
+      allow update: if isAuthenticated() && (
+        resource.data.player1.uid == request.auth.uid ||
+        (resource.data.player2 != null && resource.data.player2.uid == request.auth.uid)
+      ) &&
+      request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['player1.answers', 'player2.answers', 'player1.score', 'player2.score', 
+                 'player1.correctAnswers', 'player2.correctAnswers', 'player1.wrongAnswers', 
+                 'player2.wrongAnswers', 'status', 'endedAt', 'winner', 'player1.ready', 'player2.ready']);
+    }
+
+    // Questions collection
+    match /questions/{questionId} {
+      allow read: if isAuthenticated();
+      // Clients may read questions. Creation/update/delete should be done via
+      // the Admin SDK (seeding) to avoid exposing write access to clients.
+      allow create: if false;
+      allow update, delete: if false;
+    }
+
+    // Waiting pool collection - used for random matchmaking
+    match /waiting_pool/{poolId} {
+      allow get: if isAuthenticated();
+      // Allow list for finding potential opponents (queried by language)
+      allow list: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.keys().hasAll(['userId', 'username', 'languageRatings', 'language', 'joinedAt']);
+      allow update: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+      allow delete: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Ratings history collection
+    match /ratings/{ratingId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.keys().hasAll(['userId', 'language', 'oldRating', 'newRating', 'timestamp']) &&
+        request.resource.data.timestamp <= request.time;
+      allow update, delete: if false;
+    }
+
+    // User status collection (for online/offline status)
+    match /user-status/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAuthenticated() && isOwner(userId);
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      // Allow users to read their own notifications
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      
+      // Allow clients to create notifications
+      allow create: if isAuthenticated() && 
+        request.resource.data.keys().hasAll(['userId', 'type', 'fromUserId', 'read', 'createdAt']) &&
+        request.resource.data.type in ['friend_request_received', 'friend_request_accepted', 'friend_request_rejected', 'challenge_received', 'challenge_accepted', 'challenge_declined'];
+      
+      // Allow users to update read status of their own notifications.
+      allow update: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || request.resource.data.userId == request.auth.uid) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      
+      // Allow users to delete their own notifications
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Challenges collection - updated for friend challenges
+    match /challenges/{challengeId} {
+      // Allow reading challenges involving the user
+      allow get: if isAuthenticated() && 
+        (resource.data.creatorId == request.auth.uid || resource.data.opponentId == request.auth.uid);
+      
+      // Allow list for throttle checking (reading own challenges) and general listing
+      allow list: if isAuthenticated();
+      
+      // Allow creating challenges
+      allow create: if isAuthenticated() && 
+        request.resource.data.creatorId == request.auth.uid &&
+        request.resource.data.keys().hasAll(['creatorId', 'creatorUsername', 'mode', 'language', 'questionFormat', 'isRated', 'status', 'createdAt']);
+      
+      // Allow updating status (accept/decline) and linking match/notification
+      allow update: if isAuthenticated() && 
+        (resource.data.creatorId == request.auth.uid || resource.data.opponentId == request.auth.uid) &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['status', 'acceptedAt', 'declinedAt', 'matchId', 'opponentId', 'opponentUsername', 'opponentElo', 'opponentProfilePic', 'notificationId']);
+    }
+  }
+}

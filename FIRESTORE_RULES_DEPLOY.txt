@@ -1,0 +1,193 @@
+// ========================================
+// FIRESTORE RULES - COPY & PASTE
+// ========================================
+// Go to Firebase Console → Firestore → Rules
+// Replace ALL content with this
+// Then click "Publish"
+// ========================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isValidNewUser() {
+      return request.resource.data.keys().hasAll(['uid', 'username', 'email', 'languageRatings', 'createdAt', 'updatedAt']) &&
+        request.resource.data.uid == request.auth.uid;
+    }
+
+    function isValidRating() {
+      return request.resource.data.keys().hasAll(['HTML', 'CSS', 'JavaScript']) &&
+        request.resource.data.HTML is number &&
+        request.resource.data.CSS is number &&
+        request.resource.data.JavaScript is number;
+    }
+
+    function isValidChallenge() {
+      return request.resource.data.keys().hasAll(['creatorId', 'creatorUsername', 'mode', 'language', 'questionFormat', 'isRated', 'status', 'createdAt']) &&
+        request.resource.data.creatorId == request.auth.uid;
+    }
+
+    function isValidMatch() {
+      return request.resource.data.keys().hasAll(['player1', 'questions', 'mode', 'language', 'status', 'createdAt']) &&
+        (request.resource.data.player1.uid == request.auth.uid || 
+         (request.resource.data.player2 != null && request.resource.data.player2.uid == request.auth.uid));
+    }
+
+    function isValidGameSession() {
+      let requiredFields = ['userId', 'mode', 'language', 'startTime', 'status'];
+      let validMode = request.resource.data.mode in ['3min', '5min', 'survival'];
+      let validLanguage = request.resource.data.language in ['HTML', 'CSS', 'JavaScript'];
+      let validStatus = request.resource.data.status in ['in_progress', 'completed', 'abandoned'];
+      
+      return request.resource.data.keys().hasAll(requiredFields) &&
+        validMode &&
+        validLanguage &&
+        validStatus &&
+        request.resource.data.userId == request.auth.uid;
+    }
+
+    // ========== Users Collection ==========
+    match /users/{userId} {
+      // Allow reading individual user profiles and searching
+      allow get, list: if true;  // Allow all reads for login and search
+      
+      // Allow creating new user profile during signup
+      allow create: if request.resource.data.keys().hasAll(['uid', 'username', 'email', 'languageRatings', 'createdAt', 'updatedAt']) &&
+                   request.resource.data.uid == request.auth.uid;
+      
+      // Allow updating own profile
+      allow update: if isAuthenticated() && 
+                   isOwner(userId) &&
+                   request.resource.data.diff(resource.data).affectedKeys()
+                     .hasAny(['bio', 'profilePicture', 'languageRatings', 'updatedAt']);
+      
+      // Allow deleting own profile
+      allow delete: if isAuthenticated() && isOwner(userId);
+    }
+
+    // ========== Friends Collection ==========
+    match /friends/{friendId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+        (request.resource.data.userId == request.auth.uid || 
+         request.resource.data.friendId == request.auth.uid) &&
+        request.resource.data.keys().hasAll(['userId', 'friendId', 'status', 'createdAt']);
+      allow update: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || 
+         resource.data.friendId == request.auth.uid) &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'acceptedAt']);
+      allow delete: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || 
+         resource.data.friendId == request.auth.uid);
+    }
+
+    // ========== Game Sessions Collection ==========
+    match /game_sessions/{sessionId} {
+      allow read: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidGameSession();
+      allow update: if isAuthenticated() &&
+        resource.data.userId == request.auth.uid &&
+        resource.data.status != 'completed' &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['endTime', 'score', 'correctAnswers', 'strikes', 
+                   'status', 'questions', 'questionsAnswered', 'timeLeft']);
+      allow delete: if false;
+    }
+
+    // ========== Challenges Collection ==========
+    match /challenges/{challengeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidChallenge();
+      allow update: if isAuthenticated() && (
+        resource.data.creatorId == request.auth.uid || 
+        (resource.data.status == 'pending' && !resource.data.opponentId) ||
+        request.auth.uid == request.resource.data.opponentId
+      ) &&
+      request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['status', 'opponentId', 'matchId', 'acceptedAt']);
+      allow delete: if isAuthenticated() && 
+        resource.data.creatorId == request.auth.uid &&
+        resource.data.status == 'pending';
+    }
+
+    // ========== Matches Collection ==========
+    match /matches/{matchId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidMatch();
+      allow update: if isAuthenticated() && (
+        resource.data.player1.uid == request.auth.uid ||
+        (resource.data.player2 != null && resource.data.player2.uid == request.auth.uid)
+      ) &&
+      request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['player1.answers', 'player2.answers', 'player1.score', 'player2.score', 
+                 'player1.correctAnswers', 'player2.correctAnswers', 'player1.wrongAnswers', 
+                 'player2.wrongAnswers', 'status', 'endedAt', 'winner']);
+    }
+
+    // ========== Questions Collection ==========
+    match /questions/{questionId} {
+      allow read: if isAuthenticated();
+      // Only allow administrators to modify questions
+      allow write: if false;
+    }
+
+    // ========== Waiting Pool Collection ==========
+    match /waiting_pool/{poolId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.keys().hasAll(['userId', 'username', 'languageRatings', 'language', 'joinedAt']);
+      allow update: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+      allow delete: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid;
+    }
+
+    // ========== Ratings History Collection ==========
+    match /ratings/{ratingId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.keys().hasAll(['userId', 'language', 'oldRating', 'newRating', 'timestamp']) &&
+        request.resource.data.timestamp <= request.time;
+      allow update, delete: if false;
+    }
+
+    // ========== User Status Collection (for online/offline status) ==========
+    match /user-status/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAuthenticated() && isOwner(userId);
+    }
+
+    // ========== Notifications Collection (NEW) ==========
+    match /notifications/{notificationId} {
+      // Allow users to read their own notifications
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      
+      // Allow creating notifications (for friend requests and responses)
+      allow create: if isAuthenticated() && 
+        request.resource.data.keys().hasAll(['userId', 'type', 'fromUserId', 'read', 'createdAt']) &&
+        request.resource.data.type in ['friend_request_received', 'friend_request_accepted', 'friend_request_rejected'];
+      
+      // Allow users to update read status of their own notifications
+      allow update: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      
+      // Allow users to delete their own notifications
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+  }
+}
