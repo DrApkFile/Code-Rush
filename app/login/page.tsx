@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +14,7 @@ import { AlertCircle, Loader2 } from "lucide-react"
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { login } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +44,8 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await login(formData.emailOrUsername, formData.password)
-      router.push("/dashboard")
+      const redirectPath = searchParams.get("redirect") || "/dashboard"
+      router.push(redirectPath)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Login failed"
       setError(errorMessage)
@@ -106,7 +108,7 @@ export default function LoginPage() {
 
           <div className="mt-4 text-center text-sm">
             Do not have an account?{" "}
-            <Link href="/signup" className="text-primary hover:underline font-medium">
+            <Link href={`/signup${searchParams.get('redirect') ? `?redirect=${searchParams.get('redirect')}` : ''}`} className="text-primary hover:underline font-medium">
               Sign Up
             </Link>
           </div>

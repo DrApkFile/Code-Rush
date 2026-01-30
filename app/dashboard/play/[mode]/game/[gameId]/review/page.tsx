@@ -99,6 +99,22 @@ export default function ReviewPage() {
           if (raw) {
             try {
               const saved = JSON.parse(raw) as LocalGameSession
+
+              // Merge answers and correctness into questions so render loop works
+              if (saved.questions && saved.answers) {
+                saved.questions = saved.questions.map((q, idx) => {
+                  const sq = saved.sessionQuestions?.[idx]
+                  // Derive "correct" from sessionQuestions if available, else check index
+                  const isCorrect = sq?.correct ?? (saved.answers[idx] === q.correctAnswerIndex)
+                  return {
+                    ...q,
+                    userAnswerIndex: saved.answers[idx] ?? null,
+                    correct: isCorrect,
+                    timeSpent: sq?.timeSpent ?? 0,
+                  }
+                })
+              }
+
               setGameSession(saved)
               setLoading(false)
               sessionStorage.removeItem('last_view')
@@ -126,28 +142,28 @@ export default function ReviewPage() {
 
   if (!gameSession) {
 
-  // Build a question cache index from sessionStorage for faster lookups
-  useEffect(() => {
-    try {
-      const map: Record<string, Question> = {}
-      for (const key of Object.keys(sessionStorage)) {
-        if (!key.startsWith("questions_")) continue
-        const raw = sessionStorage.getItem(key)
-        if (!raw) continue
-        try {
-          const arr = JSON.parse(raw) as Question[]
-          for (const q of arr) {
-            if (q && q.id) map[q.id] = q
+    // Build a question cache index from sessionStorage for faster lookups
+    useEffect(() => {
+      try {
+        const map: Record<string, Question> = {}
+        for (const key of Object.keys(sessionStorage)) {
+          if (!key.startsWith("questions_")) continue
+          const raw = sessionStorage.getItem(key)
+          if (!raw) continue
+          try {
+            const arr = JSON.parse(raw) as Question[]
+            for (const q of arr) {
+              if (q && q.id) map[q.id] = q
+            }
+          } catch (e) {
+            // ignore malformed entries
           }
-        } catch (e) {
-          // ignore malformed entries
         }
+        setQuestionCache(Object.keys(map).length ? map : null)
+      } catch (e) {
+        setQuestionCache(null)
       }
-      setQuestionCache(Object.keys(map).length ? map : null)
-    } catch (e) {
-      setQuestionCache(null)
-    }
-  }, [])
+    }, [])
     return (
       <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-secondary p-4">
         <Alert variant="destructive" className="max-w-md">
@@ -239,7 +255,7 @@ export default function ReviewPage() {
               // Clear flags that can cause an active game to be restored
               sessionStorage.removeItem('last_view')
               sessionStorage.removeItem('last_game_id')
-              try { sessionStorage.removeItem(`current_game_${gameId}`) } catch (e) {}
+              try { sessionStorage.removeItem(`current_game_${gameId}`) } catch (e) { }
               // Navigate back to the play mode setup page (preserve the route segment)
               router.push(`/dashboard/play/${mode}/setup`)
             }}>
@@ -255,7 +271,8 @@ export default function ReviewPage() {
               return (
                 <div
                   key={idx}
-                  className="border rounded-lg p-4 mb-2 bg-card"
+                  className="border rounded-lg p-4 mb-2 bg-card cursor-pointer hover:bg-accent/50 transition-colors"
+                  onClick={() => setSelectedReviewIndex(idx)}
                 >
                   <div className="flex justify-between items-center mb-1">
                     <span className="font-semibold">Question {idx + 1}</span>

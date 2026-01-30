@@ -41,7 +41,10 @@ service cloud.firestore {
     }
 
     function isValidMatch() {
-      return request.resource.data.keys().hasAll(['player1', 'questions', 'mode', 'language', 'status', 'createdAt']) &&
+      let baseFields = ['player1', 'questions', 'mode', 'language', 'status', 'createdAt', 'isRated'];
+      let isFriend = request.resource.data.mode == 'friend';
+      return request.resource.data.keys().hasAll(baseFields) &&
+        (!isFriend || request.resource.data.keys().hasAll(['challengeMode'])) &&
         (request.resource.data.player1.uid == request.auth.uid || 
          (request.resource.data.player2 != null && request.resource.data.player2.uid == request.auth.uid));
     }
@@ -158,9 +161,11 @@ service cloud.firestore {
 
     // Matches collection - for both friend and random matchmaking
     match /matches/{matchId} {
-      // Allow authenticated users to read matches that involve them OR any completed match (public history)
-      allow read: if isAuthenticated() && (
-        resource.data.status == 'completed' ||
+      // Allow anybody to read a match document by ID to support unauthenticated spectators
+      allow get: if true;
+      
+      // Allow list for own matches
+      allow list: if isAuthenticated() && (
         resource.data.player1.uid == request.auth.uid ||
         (resource.data.player2 != null && resource.data.player2.uid == request.auth.uid)
       );
@@ -173,19 +178,14 @@ service cloud.firestore {
         (resource.data.player2 != null && resource.data.player2.uid == request.auth.uid)
       ) &&
       request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['player1.answers', 'player2.answers', 'player1.score', 'player2.score', 
-                 'player1.correctAnswers', 'player2.correctAnswers', 'player1.wrongAnswers', 
-                 'player2.wrongAnswers', 'status', 'endedAt', 'winner', 'player1.ready', 'player2.ready']);
+        .hasAny(['player1', 'player2', 'status', 'endedAt', 'winner', 'questions', 'rematch']);
     }
 
     // Solo matches collection - canonical final match records for solo games
     // These are immutable once created, containing full question data, answers, and rating snapshots
     match /solo_matches/{matchId} {
-      // Allow reading any completed solo match (public history view) OR own matches
-      allow read: if isAuthenticated() && (
-        resource.data.status == 'completed' ||
-        resource.data.player1.uid == request.auth.uid
-      );
+      // Allow reading any completed solo match (public history view)
+      allow read: if resource.data.status == 'completed' || (isAuthenticated() && resource.data.player1.uid == request.auth.uid);
       
       // Allow creating a new solo match record at game end
       // Must have: player1 with uid/username/languageRatings snapshot, language, mode, status, questions, answers,
@@ -204,7 +204,7 @@ service cloud.firestore {
 
     // Questions collection
     match /questions/{questionId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       // Clients may read questions. Creation/update/delete should be done via
       // the Admin SDK (seeding) to avoid exposing write access to clients.
       allow create: if false;
@@ -264,12 +264,11 @@ service cloud.firestore {
 
     // Challenges collection - updated for friend challenges
     match /challenges/{challengeId} {
-      // Allow reading challenges involving the user
-      allow get: if isAuthenticated() && 
-        (resource.data.creatorId == request.auth.uid || resource.data.opponentId == request.auth.uid);
+      // Allow anyone to read challenge info (creator, mode, etc) to show joining page
+      allow get: if true;
       
-      // Allow list for throttle checking (reading own challenges) and general listing
-      allow list: if isAuthenticated();
+      // Allow list for own challenges only
+      allow list: if isAuthenticated() && request.query.creatorId == request.auth.uid;
       
       // Allow creating challenges
       allow create: if isAuthenticated() && 
@@ -278,7 +277,7 @@ service cloud.firestore {
       
       // Allow updating status (accept/decline) and linking match/notification
       allow update: if isAuthenticated() && 
-        (resource.data.creatorId == request.auth.uid || resource.data.opponentId == request.auth.uid) &&
+        (resource.data.creatorId == request.auth.uid || resource.data.opponentId == request.auth.uid || resource.data.opponentId == "") &&
         request.resource.data.diff(resource.data).affectedKeys()
           .hasAny(['status', 'acceptedAt', 'declinedAt', 'matchId', 'opponentId', 'opponentUsername', 'opponentElo', 'opponentProfilePic', 'notificationId']);
     }

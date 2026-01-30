@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +14,7 @@ import { AlertCircle, Loader2 } from "lucide-react"
 
 export default function SignupPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { signup } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -58,7 +59,8 @@ export default function SignupPage() {
     setLoading(true)
     try {
       await signup(formData.username, formData.email, formData.password)
-      router.push("/bio-setup")
+      const redirectPath = searchParams.get("redirect") || "/bio-setup"
+      router.push(redirectPath)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Signup failed"
       setError(errorMessage)
@@ -151,7 +153,7 @@ export default function SignupPage() {
 
           <div className="mt-4 text-center text-sm">
             Already have an account?{" "}
-            <Link href="/login" className="text-primary hover:underline font-medium">
+            <Link href={`/login${searchParams.get('redirect') ? `?redirect=${searchParams.get('redirect')}` : ''}`} className="text-primary hover:underline font-medium">
               Login
             </Link>
           </div>

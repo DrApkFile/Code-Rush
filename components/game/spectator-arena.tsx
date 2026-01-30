@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { listenToMatchAsSpectator } from "@/lib/spectator-queries"
+import { listenToMatch, type Match } from "@/lib/multiplayer-queries"
 import { Button } from "@/components/ui/button"
 
 interface SpectatorArenaProps {
@@ -16,14 +16,31 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
   const [timeLeft, setTimeLeft] = useState(0)
   const [gameEnded, setGameEnded] = useState(false)
+  const hasInitialized = useRef(false)
 
   // Listen to match updates
   useEffect(() => {
-    const unsubscribe = listenToMatchAsSpectator(matchId, (updatedMatch) => {
+    const unsubscribe = listenToMatch(matchId, (updatedMatch: Match) => {
       setMatch(updatedMatch)
 
       if (updatedMatch.status === "completed") {
         setGameEnded(true)
+      }
+
+      // Calculate time for spectators
+      if (updatedMatch.status === "in_progress" && !hasInitialized.current) {
+        const rawMode = updatedMatch.challengeMode || updatedMatch.mode
+        let modeTime = 3
+        if (rawMode) {
+          const modeStr = String(rawMode).replace("-", "")
+          if (modeStr === "3min") modeTime = 3
+          else if (modeStr === "5min") modeTime = 5
+          else if (modeStr === "survival") modeTime = 999
+        }
+
+        console.log('[Spectator] Starting timer with minutes:', modeTime)
+        setTimeLeft(modeTime * 60)
+        hasInitialized.current = true
       }
 
       // Sync current question based on max progress
@@ -34,17 +51,23 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
       if (maxQuestionIndex > 0) {
         setCurrentQuestionIndex(Math.min(maxQuestionIndex, updatedMatch.questions.length - 1))
       }
-
-      // Calculate time left based on mode
-      const modeTime = updatedMatch.mode === "3-min" ? 3 : updatedMatch.mode === "5-min" ? 5 : 999
-      const elapsedTime = Date.now() - (updatedMatch.startedAt || Date.now())
-      const totalTimeMs = modeTime * 60 * 1000
-      const remainingMs = Math.max(0, totalTimeMs - elapsedTime)
-      setTimeLeft(Math.ceil(remainingMs / 1000))
     })
 
     return () => unsubscribe()
-  }, [matchId])
+  }, [matchId]) // Removed timeLeft to prevent rapid resubscription
+
+  // Timer countdown effect
+  useEffect(() => {
+    if (match && match.status === "in_progress" && !gameEnded) {
+      const timer = setInterval(() => {
+        setTimeLeft((prevTime) => {
+          if (prevTime <= 0) return 0
+          return prevTime - 1
+        })
+      }, 1000)
+      return () => clearInterval(timer)
+    }
+  }, [match, gameEnded])
 
   if (!match) {
     return (
@@ -109,7 +132,7 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
             </div>
 
             <div className="text-center">
-              <p className="text-sm text-muted-foreground">Time Left</p>
+              <p className="text-sm text-muted-foreground">Timer</p>
               <p className="text-2xl font-bold text-foreground">
                 {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, "0")}
               </p>
@@ -127,13 +150,23 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
             <div className="bg-muted p-3 rounded-lg text-center">
               <p className="text-xs text-muted-foreground mb-1">{match.player1.username}</p>
               <p className="text-2xl font-bold text-foreground">{match.player1.score}</p>
-              <p className="text-xs text-muted-foreground mt-1">{match.player1.correctAnswers} Correct</p>
+              <div className="flex justify-center gap-2 mt-1">
+                <span className="text-xs text-green-600">{match.player1.correctAnswers} ✓</span>
+                <span className="text-xs text-muted-foreground border-l pl-2">
+                  Q{match.player1.answers.findIndex((a: any) => a === null) === -1 ? match.questions.length : match.player1.answers.findIndex((a: any) => a === null) + 1}
+                </span>
+              </div>
             </div>
 
             <div className="bg-muted p-3 rounded-lg text-center">
               <p className="text-xs text-muted-foreground mb-1">{match.player2?.username}</p>
               <p className="text-2xl font-bold text-foreground">{match.player2?.score || 0}</p>
-              <p className="text-xs text-muted-foreground mt-1">{match.player2?.correctAnswers || 0} Correct</p>
+              <div className="flex justify-center gap-2 mt-1">
+                <span className="text-xs text-green-600">{match.player2?.correctAnswers || 0} ✓</span>
+                <span className="text-xs text-muted-foreground border-l pl-2">
+                  Q{match.player2 ? (match.player2.answers.findIndex((a: any) => a === null) === -1 ? match.questions.length : match.player2.answers.findIndex((a: any) => a === null) + 1) : 0}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -150,13 +183,12 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
                 {question.options.map((option: string, idx: number) => (
                   <div
                     key={idx}
-                    className={`p-3 rounded border transition-colors ${
-                      idx === question.correctAnswerIndex
-                        ? "bg-green-500/20 border-green-500 text-green-700"
-                        : player1Answer === idx
-                          ? "bg-red-500/20 border-red-500 text-red-700"
-                          : "bg-background border-border"
-                    }`}
+                    className={`p-3 rounded border transition-colors ${idx === question.correctAnswerIndex
+                      ? "bg-green-500/20 border-green-500 text-green-700"
+                      : player1Answer === idx
+                        ? "bg-red-500/20 border-red-500 text-red-700"
+                        : "bg-background border-border"
+                      }`}
                   >
                     <div className="flex items-start gap-2">
                       <span className="text-xs font-semibold">{String.fromCharCode(65 + idx)}.</span>
@@ -191,13 +223,12 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
                 {question.options.map((option: string, idx: number) => (
                   <div
                     key={idx}
-                    className={`p-3 rounded border transition-colors ${
-                      idx === question.correctAnswerIndex
-                        ? "bg-green-500/20 border-green-500 text-green-700"
-                        : player2Answer === idx
-                          ? "bg-red-500/20 border-red-500 text-red-700"
-                          : "bg-background border-border"
-                    }`}
+                    className={`p-3 rounded border transition-colors ${idx === question.correctAnswerIndex
+                      ? "bg-green-500/20 border-green-500 text-green-700"
+                      : player2Answer === idx
+                        ? "bg-red-500/20 border-red-500 text-red-700"
+                        : "bg-background border-border"
+                      }`}
                   >
                     <div className="flex items-start gap-2">
                       <span className="text-xs font-semibold">{String.fromCharCode(65 + idx)}.</span>

@@ -5,10 +5,13 @@ import { useRouter, useParams } from "next/navigation"
 import { Card, CardContent } from "@/components/ui/card"
 import { getChallenge, getChallengeByMatchId, type Challenge } from "@/lib/friend-challenges"
 import { preloadQuestionsCache } from "@/lib/game-queries"
+import { useAuth } from "@/lib/auth-context"
+import { updateMatchPlayerReady } from "@/lib/multiplayer-queries"
 
 export default function CountdownPage() {
   const router = useRouter()
   const params = useParams()
+  const { userProfile } = useAuth()
   const matchId = params.challengeId as string
 
   const [countdown, setCountdown] = useState(3)
@@ -53,17 +56,34 @@ export default function CountdownPage() {
 
   useEffect(() => {
     if (countdown === 0) {
-      // Redirect to game (friend match route)
-      router.push(`/dashboard/play/friend/${matchId}`)
+      // Set flag to avoid re-redirecting to countdown
+      try {
+        sessionStorage.setItem(`countdown_seen_${matchId}`, "true")
+      } catch (e) { }
+
+      // Redirect to challenge page which will now render the arena
+      router.push(`/challenge/${matchId}`)
       return
     }
 
     const timer = setTimeout(() => {
-      setCountdown(countdown - 1)
+      const nextValue = countdown - 1
+      setCountdown(nextValue)
+
+      // Optimization: Mark player as ready when countdown reaches 1
+      // so by the time they land in the Arena, the readiness has likely synced.
+      if (nextValue === 1 && challenge && userProfile) {
+        const isPlayer1 = userProfile.uid === challenge.creatorId
+        const matchDocId = challenge.matchId
+        if (matchDocId) {
+          console.log('[Countdown] Pre-marking player ready...')
+          updateMatchPlayerReady(matchDocId, isPlayer1 ? 1 : 2, true).catch(() => { })
+        }
+      }
     }, 1000)
 
     return () => clearTimeout(timer)
-  }, [countdown, matchId, router])
+  }, [countdown, matchId, router, challenge, userProfile])
 
   return (
     <div className="w-full max-w-7xl mx-auto p-4 flex items-center justify-center min-h-screen bg-gradient-to-br from-primary/10 to-primary/5">

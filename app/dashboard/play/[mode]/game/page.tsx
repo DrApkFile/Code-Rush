@@ -3,14 +3,14 @@
 import { useEffect, useState, useRef } from "react"
 import { useRouter, useParams, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
-import { 
-  getCachedQuestions, 
+import {
+  getCachedQuestions,
   fetchRandomQuestions,
   fetchBalancedRandomQuestions,
   createGameSession,
   updateGameSession,
   type GameSession,
-  type Question 
+  type Question
 } from "@/lib/game-queries"
 import { createSoloMatch } from "@/lib/multiplayer-queries"
 
@@ -83,6 +83,7 @@ export default function GamePage() {
   const gameSessionRef = useRef<LocalGameSession | null>(null)
   const timeLeftRef = useRef<number>(0)
   const initGameRef = useRef<boolean>(false) // Guard against duplicate initialization
+  const isSavingRef = useRef<boolean>(false) // Guard against duplicate saves
 
   // Game mode settings
   const getModeSettings = (mode: string) => {
@@ -96,6 +97,100 @@ export default function GamePage() {
 
   const modeSettings = getModeSettings(mode)
 
+  // Shared abandonment logic
+  const handleAbandonment = async (session: LocalGameSession) => {
+    // Guard against race conditions using same ref as endGame
+    if (isSavingRef.current) return { accuracy: 0, gained: 0, shouldShowResults: false }
+    isSavingRef.current = true
+
+    let accuracy = 0
+    if (session.questionsAnswered > 0) {
+      accuracy = Math.round((session.correctAnswers / session.questionsAnswered) * 100)
+    }
+
+    let gained = 0
+    // Only deduct rating if user interacted (answered/skipped at least 1)
+    if (session.questionsAnswered > 0) {
+      gained = -12
+    }
+
+    // 1. Update Profile Rating if needed
+    let ratingBeforeLocal = 400
+    let ratingAfterLocal = 400
+
+    if (gained !== 0 && userProfile) {
+      try {
+        if (searchParams.get("language") === "random" || (playType as string) === "random") {
+          // Identify played language
+          const playedLang = session.language as keyof typeof userProfile.languageRatings
+          const prev = (userProfile.languageRatings as any)[playedLang] ?? 400
+          const newVal = Math.max(400, prev + gained)
+          ratingBeforeLocal = prev
+          ratingAfterLocal = newVal
+
+          const updatedRatings = {
+            ...userProfile.languageRatings,
+            HTML: Math.max(400, userProfile.languageRatings.HTML + gained),
+            CSS: Math.max(400, userProfile.languageRatings.CSS + gained),
+            JavaScript: Math.max(400, userProfile.languageRatings.JavaScript + gained),
+          }
+          updatedRatings.overall = Math.round((updatedRatings.HTML + updatedRatings.CSS + updatedRatings.JavaScript) / 3)
+          await updateUserProfile({ languageRatings: updatedRatings })
+        } else {
+          const lang = session.language as keyof typeof userProfile.languageRatings
+          const prev = (userProfile.languageRatings as any)[lang] ?? 400
+          const newVal = Math.max(400, prev + gained)
+          ratingBeforeLocal = prev
+          ratingAfterLocal = newVal
+
+          const updatedRatings = {
+            ...userProfile.languageRatings,
+            [lang]: Math.max(400, (userProfile.languageRatings as any)[lang] + gained),
+          }
+          updatedRatings.overall = Math.round((updatedRatings.HTML + updatedRatings.CSS + updatedRatings.JavaScript) / 3)
+          await updateUserProfile({ languageRatings: updatedRatings })
+        }
+      } catch (e) {
+        console.error("Failed to update rating on abandonment", e)
+      }
+    }
+
+    // 2. Update Game Session
+    await updateGameSession(session.id, {
+      endTime: true,
+      status: "abandoned",
+      gameOver: true,
+      accuracy,
+      score: session.score, // keep score even if abandoned
+    }).catch(() => { })
+
+    // 3. Create Solo Match Record (so it shows in history)
+    // Only if user actually played (answered > 0)
+    if (userProfile && session.questionsAnswered > 0) {
+      try {
+        await createSoloMatch(
+          userProfile.uid,
+          userProfile.username,
+          session.language,
+          session.questions,
+          session.answers,
+          session.sessionQuestions,
+          session.correctAnswers,
+          session.questionsAnswered,
+          ratingBeforeLocal,
+          ratingAfterLocal,
+          gained,
+          userProfile.languageRatings,
+          mode as "3min" | "5min" | "survival"
+        )
+      } catch (e) {
+        console.error("Failed to create solo match for abandonment", e)
+      }
+    }
+
+    return { accuracy, gained, shouldShowResults: session.questionsAnswered > 0 }
+  }
+
   // Initialize game session
   useEffect(() => {
     // Guard against running twice due to StrictMode or other double-calls
@@ -106,7 +201,7 @@ export default function GamePage() {
       try {
         // Try to restore a previous session from sessionStorage first
         const lastId = sessionStorage.getItem("last_game_id")
-        
+
         if (lastId) {
           const raw = sessionStorage.getItem(`current_game_${lastId}`)
           if (raw) {
@@ -114,11 +209,19 @@ export default function GamePage() {
               const saved = JSON.parse(raw) as LocalGameSession
               // Restore if it matches current play mode/language
               if (saved && saved.mode === mode && (saved.language === actualLanguage)) {
+                if (saved.gameOver) {
+                  console.log('[initGame] Found finished game, redirecting to dashboard')
+                  // clear session storage for this game so it doesn't loop if they click play again
+                  sessionStorage.removeItem(`current_game_${lastId}`)
+                  router.replace('/dashboard')
+                  return
+                }
+
                 if (!saved.gameOver) {
                   setGameSession(saved)
                   setTimeLeft(saved.timeLeft ?? modeSettings.duration)
                   setLoading(false)
-                  
+
                   // ensure history push for popstate handling
                   window.history.pushState({ gameActive: true }, '', window.location.href)
                   return
@@ -213,7 +316,7 @@ export default function GamePage() {
     let lastSync = Date.now()
     timerRef.current = setInterval(() => {
       const now = Date.now()
-      
+
       // Decrement the ref directly
       timeLeftRef.current -= 1
       setTimeLeft(timeLeftRef.current)
@@ -226,7 +329,7 @@ export default function GamePage() {
           questionsAnswered: gameSessionRef.current.questionsAnswered,
           correctAnswers: gameSessionRef.current.correctAnswers,
           timeLeft: timeLeftRef.current,
-        }).catch(() => {})
+        }).catch(() => { })
       }
 
       // Check if time is up
@@ -253,26 +356,21 @@ export default function GamePage() {
   // Check if page was reloaded during an active game (via toolbar reload button)
   useEffect(() => {
     const reloadFlag = sessionStorage.getItem('reload_triggered')
-    
+
     if (reloadFlag && gameSession && !gameSession.gameOver) {
       console.log('[reload] Detected reload during active game, ending game and showing results')
       sessionStorage.removeItem('reload_triggered')
-      
-      const accuracy = Math.round((gameSession.correctAnswers / Math.max(gameSession.questionsAnswered, 1)) * 100)
-      updateGameSession(gameSession.id, {
-        endTime: true,
-        status: "abandoned",
-        gameOver: true,
-        accuracy,
-      }).catch(() => {})
-      
-      setGameSession((prev) => prev ? {
-        ...prev,
-        gameOver: true,
-        endTime: new Date(),
-        accuracy,
-      } : prev)
-      setShowResults(true)
+
+      handleAbandonment(gameSession).then(({ accuracy, gained }) => {
+        setGameSession((prev) => prev ? {
+          ...prev,
+          gameOver: true,
+          endTime: new Date(),
+          accuracy,
+        } : prev)
+        setRatingChange(gained)
+        setShowResults(true)
+      })
     }
   }, [gameSession])
 
@@ -288,26 +386,20 @@ export default function GamePage() {
           console.log('[keydown] Caught reload hotkey, ending game and showing results')
           e.preventDefault()
           e.stopPropagation()
-          
-          // End game immediately without showing modal
+
+          // End game immediately without showing modal (actually we show it after state update)
           const current = gameSessionRef.current
-          const accuracy = Math.round((current.correctAnswers / Math.max(current.questionsAnswered, 1)) * 100)
-          
-          await updateGameSession(current.id, {
-            endTime: true,
-            status: "abandoned",
-            gameOver: true,
-            accuracy,
-          }).catch(() => {})
-          
-          // Update state to show results
-          setGameSession((prev) => prev ? {
-            ...prev,
-            gameOver: true,
-            endTime: new Date(),
-            accuracy,
-          } : prev)
-          setShowResults(true)
+
+          handleAbandonment(current).then(({ accuracy, gained }) => {
+            setGameSession((prev) => prev ? {
+              ...prev,
+              gameOver: true,
+              endTime: new Date(),
+              accuracy,
+            } : prev)
+            setRatingChange(gained)
+            setShowResults(true)
+          })
         }
       }
     }
@@ -411,15 +503,15 @@ export default function GamePage() {
     setGameSession((prev) =>
       prev
         ? {
-            ...prev,
-            wrongAnswers: newWrong,
-            strikes: newWrong,
-            correctAnswers: newCorrect,
-            score: newScore,
-            questionsAnswered: newQuestionsAnswered,
-            answers: newAnswers,
-            accuracy: Math.round((newCorrect / Math.max(newQuestionsAnswered, 1)) * 100),
-          }
+          ...prev,
+          wrongAnswers: newWrong,
+          strikes: newWrong,
+          correctAnswers: newCorrect,
+          score: newScore,
+          questionsAnswered: newQuestionsAnswered,
+          answers: newAnswers,
+          accuracy: Math.round((newCorrect / Math.max(newQuestionsAnswered, 1)) * 100),
+        }
         : prev,
     )
     console.log('STATE UPDATE called with newWrong:', newWrong, 'newCorrect:', newCorrect)
@@ -433,7 +525,7 @@ export default function GamePage() {
       questionsAnswered: newQuestionsAnswered,
       wrongAnswers: newWrong,
       accuracy: Math.round((newCorrect / Math.max(newQuestionsAnswered, 1)) * 100),
-    }).catch(() => {})
+    }).catch(() => { })
 
     // Check survival mode: if 5 strikes reached, end game
     console.debug('[survival check] mode:', mode, 'newWrong:', newWrong, 'condition (>= 5):', newWrong >= 5)
@@ -461,7 +553,7 @@ export default function GamePage() {
         questionsAnswered: newQuestionsAnswered,
         accuracy: Math.round((newCorrect / Math.max(newQuestionsAnswered, 1)) * 100),
         gameOver: true,
-      }).catch(() => {})
+      }).catch(() => { })
 
       setGameSession(finalSession)
       setShowResults(true)
@@ -489,7 +581,7 @@ export default function GamePage() {
           // Specific language: fetch from that language
           extra = await fetchRandomQuestions(language, format, 10)
         }
-        
+
         if (extra.length > 0) {
           const appendedQuestions = [...gameSessionRef.current!.questions, ...extra]
           const appendedSessionQuestions = [
@@ -501,12 +593,12 @@ export default function GamePage() {
           setGameSession((prev) =>
             prev
               ? {
-                  ...prev,
-                  questions: appendedQuestions,
-                  sessionQuestions: appendedSessionQuestions,
-                  answers: appendedAnswers,
-                  totalQuestions: appendedQuestions.length,
-                }
+                ...prev,
+                questions: appendedQuestions,
+                sessionQuestions: appendedSessionQuestions,
+                answers: appendedAnswers,
+                totalQuestions: appendedQuestions.length,
+              }
               : prev,
           )
 
@@ -518,7 +610,7 @@ export default function GamePage() {
               answers: appendedAnswers,
               questions: newSessionQuestions,
               // also update totalQuestions on server if desired
-            }).catch(() => {})
+            }).catch(() => { })
           } catch (e) {
             // ignore persistence errors; local state still correct
           }
@@ -529,16 +621,16 @@ export default function GamePage() {
       setGameSession((prev) =>
         prev
           ? {
-              ...prev,
-              answers: newAnswers,
-              correctAnswers: newCorrect,
-              wrongAnswers: newWrong,
-              strikes: newWrong,
-              score: newScore,
-              currentQuestionIndex: nextIndex,
-              sessionQuestions: updatedSessionQuestions,
-              questionsAnswered: newQuestionsAnswered,
-            }
+            ...prev,
+            answers: newAnswers,
+            correctAnswers: newCorrect,
+            wrongAnswers: newWrong,
+            strikes: newWrong,
+            score: newScore,
+            currentQuestionIndex: nextIndex,
+            sessionQuestions: updatedSessionQuestions,
+            questionsAnswered: newQuestionsAnswered,
+          }
           : prev,
       )
 
@@ -553,29 +645,34 @@ export default function GamePage() {
   }
 
   const endGame = async () => {
-    if (!gameSession) return
-    // Guard against double-calls
-    if (gameSession.gameOver) return
-    
+    // Use ref to avoid stale closure in timer
+    const currentSession = gameSessionRef.current
+    if (!currentSession) return
+    // Guard against race conditions and double-calls
+    if (currentSession.gameOver || isSavingRef.current) return
+
+    // Lock saving
+    isSavingRef.current = true
+
     // Compute final stats
-    const finalQuestionsAnswered = gameSession.questionsAnswered
-    const finalCorrect = gameSession.correctAnswers
-    const finalWrong = gameSession.wrongAnswers
+    const finalQuestionsAnswered = currentSession.questionsAnswered
+    const finalCorrect = currentSession.correctAnswers
+    const finalWrong = currentSession.wrongAnswers
     const accuracy = Math.round((finalCorrect / Math.max(finalQuestionsAnswered, 1)) * 100)
 
-    await updateGameSession(gameSession.id, {
+    await updateGameSession(currentSession.id, {
       endTime: true,
       status: "completed",
-      score: gameSession.score,
+      score: currentSession.score,
       correctAnswers: finalCorrect,
       strikes: finalWrong,
       questionsAnswered: finalQuestionsAnswered,
       accuracy,
       gameOver: true,
-    }).catch(() => {})
+    }).catch(() => { })
 
     const finalSession = {
-      ...gameSession,
+      ...currentSession,
       gameOver: true,
       endTime: new Date(),
       accuracy,
@@ -589,7 +686,7 @@ export default function GamePage() {
       if (playType === "solo" && userProfile) {
         let gained = 0
         let won = false
-        
+
         // Check win conditions: must have answered at least 15 questions
         if (finalQuestionsAnswered >= 15) {
           // Win if correct answers > wrong answers
@@ -609,8 +706,8 @@ export default function GamePage() {
         let ratingBeforeLocal: number | null = null
         let ratingAfterLocal: number | null = null
         if (searchParams.get("language") === "random" || (playType as string) === "random") {
-          // Determine which language this session used (gameSession.language)
-          const playedLang = gameSession.language as keyof typeof userProfile.languageRatings
+          // Determine which language this session used (currentSession.language)
+          const playedLang = currentSession.language as keyof typeof userProfile.languageRatings
           const prev = (userProfile.languageRatings as any)[playedLang] ?? 400
           const newVal = Math.max(400, prev + gained)
           // Set rating values BEFORE showing results so modal has the data
@@ -630,7 +727,7 @@ export default function GamePage() {
           await updateUserProfile({ languageRatings: updatedRatings })
           setRatingChange(gained)
         } else {
-          const lang = gameSession.language as keyof typeof userProfile.languageRatings
+          const lang = currentSession.language as keyof typeof userProfile.languageRatings
           const prev = (userProfile.languageRatings as any)[lang] ?? 400
           const newVal = Math.max(400, prev + gained)
           // Set rating values BEFORE showing results so modal has the data
@@ -653,19 +750,19 @@ export default function GamePage() {
           const soloMatchId = await createSoloMatch(
             userProfile.uid,
             userProfile.username,
-            gameSession.language,
-            gameSession.questions,
-            gameSession.answers,
-            gameSession.sessionQuestions,
+            currentSession.language,
+            currentSession.questions,
+            currentSession.answers,
+            currentSession.sessionQuestions,
             finalCorrect,
             finalQuestionsAnswered,
-            ratingBeforeLocal ?? ((userProfile.languageRatings as any)?.[gameSession.language] ?? 400),
-            ratingAfterLocal ?? ((userProfile.languageRatings as any)?.[gameSession.language] ?? 400),
+            ratingBeforeLocal ?? ((userProfile.languageRatings as any)?.[currentSession.language] ?? 400),
+            ratingAfterLocal ?? ((userProfile.languageRatings as any)?.[currentSession.language] ?? 400),
             gained,
             userProfile.languageRatings,
             mode as "3min" | "5min" | "survival"
           )
-          console.log("[v0] Solo match saved successfully", { soloMatchId, userId: userProfile.uid, language: gameSession.language, correct: finalCorrect, answered: finalQuestionsAnswered, ratingChange: gained })
+          console.log("[v0] Solo match saved successfully", { soloMatchId, userId: userProfile.uid, language: currentSession.language, correct: finalCorrect, answered: finalQuestionsAnswered, ratingChange: gained })
           toast({ title: "Match saved", description: `Solo match saved (id: ${soloMatchId}).` })
           // Show results modal AFTER rating and match are saved
           setShowResults(true)
@@ -704,28 +801,28 @@ export default function GamePage() {
     }
 
     setLastResult("wrong")
-    
+
     // Update local state immediately so bolts/strikes display updates right away
     setGameSession((prev) =>
       prev
         ? {
-            ...prev,
-            wrongAnswers: newWrong,
-            strikes: newWrong,
-            questionsAnswered: newQuestionsAnswered,
-            answers: newAnswers,
-            accuracy: Math.round((prev.correctAnswers / Math.max(newQuestionsAnswered, 1)) * 100),
-          }
+          ...prev,
+          wrongAnswers: newWrong,
+          strikes: newWrong,
+          questionsAnswered: newQuestionsAnswered,
+          answers: newAnswers,
+          accuracy: Math.round((prev.correctAnswers / Math.max(newQuestionsAnswered, 1)) * 100),
+        }
         : prev,
     )
-    
+
     updateGameSession(gameSession.id, {
       wrongAnswers: newWrong,
       strikes: newWrong,
       questions: [updatedSessionQuestions[gameSession.currentQuestionIndex]],
       questionsAnswered: newQuestionsAnswered,
       accuracy: Math.round((gameSession.correctAnswers / Math.max(newQuestionsAnswered, 1)) * 100),
-    }).catch(() => {})
+    }).catch(() => { })
 
     // Check survival mode: if 5 strikes reached, end game
     console.debug('[survival check SKIP] mode:', mode, 'newWrong:', newWrong, 'condition (>= 5):', newWrong >= 5)
@@ -750,7 +847,7 @@ export default function GamePage() {
         questionsAnswered: newQuestionsAnswered,
         accuracy: Math.round((gameSession.correctAnswers / Math.max(newQuestionsAnswered, 1)) * 100),
         gameOver: true,
-      }).catch(() => {})
+      }).catch(() => { })
 
       setGameSession(finalSession)
       setShowResults(true)
@@ -793,7 +890,7 @@ export default function GamePage() {
     console.log('[handleBackClick] CLICKED')
     console.log('  gameSession exists:', !!gameSession)
     console.log('  gameOver:', gameSession?.gameOver)
-    
+
     if (gameSession && !gameSession.gameOver) {
       console.log('[handleBackClick] Game is active, showing confirmation modal')
       setExitSource("back")
@@ -809,7 +906,7 @@ export default function GamePage() {
     console.log('[handleReloadClick] CLICKED')
     console.log('  gameSession exists:', !!gameSession)
     console.log('  gameOver:', gameSession?.gameOver)
-    
+
     // Always show the confirmation modal when clicking reload button during active game
     if (gameSession && !gameSession.gameOver) {
       console.log('[handleReloadClick] Game is active, showing confirmation modal')
@@ -872,10 +969,10 @@ export default function GamePage() {
           prevRating={prevRatingValue ?? undefined}
           newRating={newRatingValue ?? undefined}
           onClose={() => setShowResults(false)}
-          onReview={() => { 
+          onReview={() => {
             setShowResults(false)
             // Navigate to dedicated review page
-            router.push(`/dashboard/play/${playType}/game/${gameSession.id}/review`)
+            router.replace(`/dashboard/play/${playType}/game/${gameSession.id}/review`)
           }}
           onPlayAgain={() => {
             const languageParam = language || "random"

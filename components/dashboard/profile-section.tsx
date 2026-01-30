@@ -4,23 +4,53 @@ import { useState, useEffect } from "react"
 import { useAuth } from "@/lib/auth-context"
 import { getUserSoloMatches } from "@/lib/multiplayer-queries"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { useRouter } from "next/navigation"
 import GameHistoryRow from "./game-history-row"
 import { Loader2 } from "lucide-react"
 
 export default function ProfileSection() {
   const { userProfile } = useAuth()
-  const [gameHistory, setGameHistory] = useState<any[]>([])
+  const router = useRouter()
+  const [recentGames, setRecentGames] = useState<any[]>([])
+  const [stats, setStats] = useState({
+    totalGames: 0,
+    totalWins: 0,
+    totalLosses: 0,
+    averageAccuracy: 0,
+  })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (userProfile?.uid) {
-      const fetchHistory = async () => {
+      const fetchData = async () => {
         setLoading(true)
-        const history = await getUserSoloMatches(userProfile.uid)
-        setGameHistory(history)
-        setLoading(false)
+        try {
+          // Fetch only 15 for display
+          const recent = await getUserSoloMatches(userProfile.uid, 15)
+          setRecentGames(recent)
+
+          // Fetch more for stats (e.g. last 1000) - in a real app this should be a tailored aggregation query
+          const allGames = await getUserSoloMatches(userProfile.uid, 1000)
+
+          const calculatedStats = {
+            totalGames: allGames.length,
+            // A win is defined by gaining rating (ratingChange > 0), not just getting points
+            totalWins: allGames.filter((g) => (g.ratingChange || 0) > 0).length,
+            // A loss is losing rating (ratingChange < 0)
+            totalLosses: allGames.filter((g) => (g.ratingChange || 0) < 0).length,
+            averageAccuracy: allGames.length > 0
+              ? allGames.reduce((acc, g) => acc + (g.accuracy ?? 0), 0) / allGames.length
+              : 0,
+          }
+          setStats(calculatedStats)
+        } catch (error) {
+          console.error("Error fetching profile data:", error)
+        } finally {
+          setLoading(false)
+        }
       }
-      fetchHistory()
+      fetchData()
     }
   }, [userProfile?.uid])
 
@@ -30,13 +60,6 @@ export default function ProfileSection() {
     } catch {
       return 400
     }
-  }
-
-  const stats = {
-    totalGames: gameHistory.length,
-    totalWins: gameHistory.filter((g) => g.score > 0).length, // This is a simplification, win condition may vary
-    totalLosses: gameHistory.filter((g) => g.score === 0).length, // This is a simplification
-  averageAccuracy: gameHistory.length > 0 ? gameHistory.reduce((acc, g) => acc + (g.accuracy ?? 0), 0) / gameHistory.length : 0,
   }
 
   return (
@@ -77,7 +100,7 @@ export default function ProfileSection() {
             <p className="text-2xl font-bold">{stats.totalLosses}</p>
           </div>
           <div className="p-4 bg-muted rounded-lg text-center">
-            <p className="text-sm text-muted-foreground">Avg. Accuracy</p>
+            <p className="text-sm text-muted-foreground">Overall Accuracy</p>
             <p className="text-2xl font-bold">{stats.averageAccuracy.toFixed(1)}%</p>
           </div>
         </CardContent>
@@ -98,19 +121,22 @@ export default function ProfileSection() {
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Recent Games</CardTitle>
+          <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/profile/games")}>
+            View All Games
+          </Button>
         </CardHeader>
         <CardContent>
           {loading ? (
             <div className="flex justify-center items-center h-40">
               <Loader2 className="h-8 w-8 animate-spin" />
             </div>
-          ) : gameHistory.length === 0 ? (
+          ) : recentGames.length === 0 ? (
             <p className="text-muted-foreground text-center">No games played yet.</p>
           ) : (
             <div className="space-y-1">
-              {gameHistory.map((game) => (
+              {recentGames.map((game) => (
                 <GameHistoryRow key={game.id} game={game} currentRating={getRatingFor(game.language)} matchId={game.id} />
               ))}
             </div>

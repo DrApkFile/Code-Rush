@@ -35,12 +35,21 @@ export interface MatchPlayer {
   ready: boolean
 }
 
+
+export interface RematchRequest {
+  player1: boolean
+  player2: boolean
+  newMatchId?: string
+}
+
+// Update Match interface to include rematch status
 export interface Match {
   id: string
   player1: MatchPlayer
   player2?: MatchPlayer
   language: "HTML" | "CSS" | "JavaScript"
   mode: "random" | "friend" | "ranked"
+  challengeMode?: string // Added to store specific friend game mode (3min, etc)
   isRated: boolean
   questions: any[]
   status: "waiting" | "in_progress" | "completed"
@@ -48,11 +57,114 @@ export interface Match {
   startedAt?: number
   endedAt?: number
   winner?: string
+  rematch?: RematchRequest
   results?: {
     player1: { score: number; accuracy: number; correctAnswers: number }
     player2?: { score: number; accuracy: number; correctAnswers: number }
   }
 }
+
+// ... existing code ...
+
+// Append questions to an active match (Infinite Questions)
+export async function appendMatchQuestions(
+  matchId: string,
+  language: "HTML" | "CSS" | "JavaScript",
+  count: number = 10
+): Promise<void> {
+  try {
+    const newQuestions = await fetchQuestionsFromGame(language, undefined, count)
+    const matchRef = doc(db, "matches", matchId)
+    const matchSnap = await getDoc(matchRef)
+
+    if (!matchSnap.exists()) return
+
+    const match = matchSnap.data() as Match
+    const updatedQuestions = [...match.questions, ...newQuestions]
+
+    // Extend answers array for both players
+    const p1Answers = [...match.player1.answers, ...new Array(newQuestions.length).fill(null)]
+    const p2Answers = match.player2
+      ? [...match.player2.answers, ...new Array(newQuestions.length).fill(null)]
+      : []
+
+    await updateDoc(matchRef, {
+      questions: updatedQuestions,
+      "player1.answers": p1Answers,
+      ...(match.player2 ? { "player2.answers": p2Answers } : {})
+    })
+
+    console.log(`[v0] Appended ${count} questions to match ${matchId}`)
+  } catch (error) {
+    console.error("[v0] Error appending questions:", error)
+  }
+}
+
+// Handle Rematch Request within a match context
+export async function requestRematchInMatch(
+  matchId: string,
+  playerNumber: 1 | 2
+): Promise<void> {
+  try {
+    const matchRef = doc(db, "matches", matchId)
+    await updateDoc(matchRef, {
+      [`rematch.player${playerNumber}`]: true
+    })
+  } catch (error) {
+    console.error("[v0] Error requesting rematch in match:", error)
+  }
+}
+
+export async function declineRematchInMatch(matchId: string): Promise<void> {
+  try {
+    const matchRef = doc(db, "matches", matchId)
+    await updateDoc(matchRef, {
+      "rematch.declined": true
+    })
+  } catch (error) {
+    console.error("[v0] Error declining rematch in match:", error)
+  }
+}
+
+// Create the actual new match and link it
+export async function createRematchGame(
+  oldMatchId: string,
+  oldMatch: Match
+): Promise<string> {
+  try {
+    // 1. Create new match
+    const newMatchId = await createMatch(
+      {
+        userId: oldMatch.player1.uid,
+        username: oldMatch.player1.username,
+        profilePicture: oldMatch.player1.profilePicture,
+        languageRatings: oldMatch.player1.languageRatings
+      },
+      {
+        userId: oldMatch.player2!.uid,
+        username: oldMatch.player2!.username,
+        profilePicture: oldMatch.player2!.profilePicture,
+        languageRatings: oldMatch.player2!.languageRatings
+      },
+      oldMatch.language,
+      oldMatch.mode,
+      oldMatch.challengeMode,
+      oldMatch.isRated
+    )
+
+    // 2. Update old match with pointer
+    const matchRef = doc(db, "matches", oldMatchId)
+    await updateDoc(matchRef, {
+      "rematch.newMatchId": newMatchId
+    })
+
+    return newMatchId
+  } catch (error) {
+    console.error("[v0] Failed to create rematch game", error)
+    throw error
+  }
+}
+
 
 // Add player to waiting pool
 export async function joinWaitingPool(
@@ -123,6 +235,8 @@ export async function createMatch(
   player2Data: any,
   language: "HTML" | "CSS" | "JavaScript",
   mode: "random" | "friend" | "ranked",
+  challengeMode?: string,
+  isRatedParam?: boolean
 ): Promise<string> {
   try {
     const questions = await fetchQuestionsFromGame(language)
@@ -133,7 +247,7 @@ export async function createMatch(
         uid: player1Data.userId,
         username: player1Data.username,
         profilePicture: player1Data.profilePicture || "",
-        languageRatings: player1Data.languageRatings,
+        languageRatings: player1Data.languageRatings || { HTML: 1200, CSS: 1200, JavaScript: 1200 },
         score: 0,
         correctAnswers: 0,
         wrongAnswers: 0,
@@ -144,7 +258,7 @@ export async function createMatch(
         uid: player2Data.userId,
         username: player2Data.username,
         profilePicture: player2Data.profilePicture || "",
-        languageRatings: player2Data.languageRatings,
+        languageRatings: player2Data.languageRatings || { HTML: 1200, CSS: 1200, JavaScript: 1200 },
         score: 0,
         correctAnswers: 0,
         wrongAnswers: 0,
@@ -153,7 +267,8 @@ export async function createMatch(
       },
       language,
       mode,
-      isRated: mode === "ranked",
+      challengeMode,
+      isRated: isRatedParam !== undefined ? isRatedParam : mode === "ranked",
       questions,
       status: "waiting",
       createdAt: Date.now(),
@@ -172,13 +287,13 @@ export function listenToMatch(matchId: string, callback: (match: Match) => void)
   try {
     const unsubscribe = onSnapshot(doc(db, "matches", matchId), (snapshot) => {
       if (snapshot.exists()) {
-        callback(snapshot.data() as Match)
+        callback({ id: snapshot.id, ...snapshot.data() } as Match)
       }
     })
     return unsubscribe
   } catch (error) {
     console.error("[v0] Error listening to match:", error)
-    return () => {}
+    return () => { }
   }
 }
 
@@ -198,32 +313,47 @@ export async function updateMatchPlayerAnswer(
 
     const match = matchSnap.data() as Match
     const playerKey = playerNumber === 1 ? "player1" : "player2"
-    const player = match[playerKey]
 
-    if (!player) return
+    // We use dot notation for nested updates to prevent overwriting the whole player object
+    // and correctly handle concurrent updates (fire and forget pattern)
+    const updates: any = {
+      [`${playerKey}.answers`]: new Array(match.questions.length).fill(null)
+    }
 
-  // Update answer (answers array supports null for skipped)
-  const newAnswers = [...player.answers]
-  newAnswers[questionIndex] = answerIndex as any
+    // In practice, we just want to update THE SPECIFIC answer index if possible,
+    // but Firestore updateDoc with arrays requires sending the whole array OR using arrayUnion.
+    // For positioning, we must send the array. 
+    const currentAnswers = [...match[playerKey]!.answers]
+    currentAnswers[questionIndex] = answerIndex
 
-  // For skipped questions (answerIndex === null), count as wrong
-  const isSkipped = answerIndex === null
-  const newCorrectAnswers = isCorrect && !isSkipped ? player.correctAnswers + 1 : player.correctAnswers
-  const newWrongAnswers = (!isCorrect || isSkipped) ? player.wrongAnswers + 1 : player.wrongAnswers
-  const newScore = newCorrectAnswers * 10
+    const isSkipped = answerIndex === null
+    const newCorrectCount = isCorrect && !isSkipped ? (match[playerKey]!.correctAnswers + 1) : match[playerKey]!.correctAnswers
+    const newWrongCount = (!isCorrect || isSkipped) ? (match[playerKey]!.wrongAnswers + 1) : match[playerKey]!.wrongAnswers
+    const newScore = newCorrectCount * 10
 
     await updateDoc(matchRef, {
-      [playerKey]: {
-        ...player,
-        answers: newAnswers,
-        score: newScore,
-        correctAnswers: newCorrectAnswers,
-        wrongAnswers: newWrongAnswers,
-      },
+      [`${playerKey}.answers`]: currentAnswers,
+      [`${playerKey}.score`]: newScore,
+      [`${playerKey}.correctAnswers`]: newCorrectCount,
+      [`${playerKey}.wrongAnswers`]: newWrongCount,
     })
   } catch (error) {
     console.error("[v0] Error updating match answer:", error)
     throw error
+  }
+}
+
+// Start match by setting status to in_progress
+export async function startMatch(matchId: string): Promise<void> {
+  try {
+    const matchRef = doc(db, "matches", matchId)
+    await updateDoc(matchRef, {
+      status: "in_progress",
+      startedAt: Date.now()
+    })
+    console.log(`[v0] Match ${matchId} started (status: in_progress)`)
+  } catch (error) {
+    console.error("[v0] Error starting match:", error)
   }
 }
 
@@ -249,8 +379,8 @@ export async function completeMatch(
 
     // Calculate accuracy based on answered questions only (not total questions)
     const player1TotalAnswered = match.player1.correctAnswers + match.player1.wrongAnswers
-    const player1Accuracy = player1TotalAnswered > 0 
-      ? (match.player1.correctAnswers / player1TotalAnswered) * 100 
+    const player1Accuracy = player1TotalAnswered > 0
+      ? (match.player1.correctAnswers / player1TotalAnswered) * 100
       : 0
 
     // Update match document
@@ -266,12 +396,12 @@ export async function completeMatch(
         },
         player2: match.player2
           ? {
-              score: player2Score,
-              accuracy: match.player2.correctAnswers > 0 
-                ? (match.player2.correctAnswers / (match.player2.correctAnswers + match.player2.wrongAnswers)) * 100
-                : 0,
-              correctAnswers: match.player2.correctAnswers,
-            }
+            score: player2Score,
+            accuracy: match.player2.correctAnswers > 0
+              ? (match.player2.correctAnswers / (match.player2.correctAnswers + match.player2.wrongAnswers)) * 100
+              : 0,
+            correctAnswers: match.player2.correctAnswers,
+          }
           : undefined,
       },
     })
@@ -385,7 +515,7 @@ export async function getUserSoloMatches(userId: string, gamesLimit = 20): Promi
         endTime: d.endedAt ?? d.createdAt,
         score: d.results?.player1?.score ?? (d.player1?.score ?? 0),
         correctAnswers: d.player1?.correctAnswers ?? d.results?.player1?.correctAnswers ?? 0,
-        questionsAnswered: d.questions?.length ?? (d.results?.player1?.correctAnswers ?? 0) + (d.player1?.wrongAnswers ?? 0),
+        questionsAnswered: (d.player1?.correctAnswers ?? 0) + (d.player1?.wrongAnswers ?? 0) || (d.questions?.length ?? 0),
         accuracy: d.results?.player1?.accuracy ?? 0,
         ratingChange: d.ratingChange ?? 0,
         questions: d.questions ?? [],
@@ -406,7 +536,7 @@ export async function createSoloMatch(
   language: "HTML" | "CSS" | "JavaScript",
   questionsFull: any[],
   answers: (number | null)[],
-  sessionQuestions: Array<{ questionId: string; correct: boolean; timeSpent: number }> ,
+  sessionQuestions: Array<{ questionId: string; correct: boolean; timeSpent: number }>,
   correctAnswers: number,
   totalQuestions: number,
   ratingBefore: number,
@@ -476,6 +606,25 @@ export async function createSoloMatch(
     return docRef.id
   } catch (error) {
     console.error("[v0] Error creating solo match:", error)
+    throw error
+  }
+}
+
+// Update player ready status
+export async function updateMatchPlayerReady(
+  matchId: string,
+  playerNumber: 1 | 2,
+  ready: boolean,
+): Promise<void> {
+  try {
+    const matchRef = doc(db, "matches", matchId)
+    const field = `player${playerNumber}.ready`
+    await updateDoc(matchRef, {
+      [field]: ready,
+    })
+    console.log(`[v0] Updated match ${matchId} player ${playerNumber} ready status: ${ready}`)
+  } catch (error) {
+    console.error("[v0] Error updating player ready status:", error)
     throw error
   }
 }

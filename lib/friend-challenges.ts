@@ -2,16 +2,19 @@ import { collection, doc, addDoc, getDoc, updateDoc, onSnapshot, query, where, g
 import { db } from "./firebase"
 import { fetchRandomQuestions } from "./game-queries"
 import { createNotification } from "./friends-queries"
+import { LanguageRatings } from "./multiplayer-queries"
 
 export interface Challenge {
   id: string
   creatorId: string
   creatorUsername: string
   creatorElo: number
+  creatorLanguageRatings?: LanguageRatings
   creatorProfilePic?: string
   opponentId?: string
   opponentUsername?: string
   opponentElo?: number
+  opponentLanguageRatings?: LanguageRatings
   opponentProfilePic?: string
   mode: "3-min" | "5-min" | "survival"
   language: "HTML" | "CSS" | "JavaScript"
@@ -32,6 +35,7 @@ export async function createChallenge(
   creatorId: string,
   creatorUsername: string,
   creatorElo: number,
+  creatorLanguageRatings: LanguageRatings | undefined,
   creatorProfilePic: string | undefined,
   opponentId: string | undefined,
   mode: "3-min" | "5-min" | "survival",
@@ -45,6 +49,7 @@ export async function createChallenge(
       creatorId,
       creatorUsername,
       creatorElo,
+      creatorLanguageRatings,
       creatorProfilePic,
       opponentId,
       mode,
@@ -72,6 +77,7 @@ export async function acceptChallenge(
   opponentId: string,
   opponentUsername: string,
   opponentElo: number,
+  opponentLanguageRatings: LanguageRatings | undefined,
   opponentProfilePic: string | undefined,
 ): Promise<string> {
   try {
@@ -89,6 +95,7 @@ export async function acceptChallenge(
       opponentId,
       opponentUsername,
       opponentElo,
+      opponentLanguageRatings,
       opponentProfilePic,
       status: "accepted",
       acceptedAt: Date.now(),
@@ -104,7 +111,7 @@ export async function acceptChallenge(
         uid: challenge.creatorId,
         username: challenge.creatorUsername,
         profilePicture: challenge.creatorProfilePic || "",
-        eloRating: challenge.creatorElo,
+        languageRatings: challenge.creatorLanguageRatings || { HTML: challenge.creatorElo, CSS: challenge.creatorElo, JavaScript: challenge.creatorElo },
         score: 0,
         correctAnswers: 0,
         wrongAnswers: 0,
@@ -115,7 +122,7 @@ export async function acceptChallenge(
         uid: opponentId,
         username: opponentUsername,
         profilePicture: opponentProfilePic || "",
-        eloRating: opponentElo,
+        languageRatings: opponentLanguageRatings || { HTML: opponentElo, CSS: opponentElo, JavaScript: opponentElo },
         score: 0,
         correctAnswers: 0,
         wrongAnswers: 0,
@@ -124,6 +131,7 @@ export async function acceptChallenge(
       },
       language: challenge.language,
       mode: "friend",
+      challengeMode: challenge.mode, // Store the specific mode (3min, 5min, survival)
       isRated: challenge.isRated,
       questions,
       status: "in_progress",
@@ -195,7 +203,7 @@ export function listenToChallenge(challengeId: string, callback: (challenge: Cha
     return unsubscribe
   } catch (error) {
     console.error("[v0] Error listening to challenge:", error)
-    return () => {}
+    return () => { }
   }
 }
 
@@ -238,6 +246,7 @@ export async function requestRematch(
       creatorId,
       user.username,
       user.eloRating,
+      user.languageRatings,
       user.profilePicture,
       opponentId,
       originalChallenge.mode,
@@ -254,24 +263,27 @@ export async function requestRematch(
 // Check if user has sent too many challenges (throttle: 5 in 2 hours)
 export async function checkChallengeThrottle(userId: string): Promise<{ allowed: boolean; remainingAttempts: number; resetTime?: number }> {
   try {
-    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000
+    const oneHourAgo = Date.now() - 1 * 60 * 60 * 1000
     const q = query(
       collection(db, "challenges"),
       where("creatorId", "==", userId),
-      where("createdAt", ">", twoHoursAgo),
+      where("createdAt", ">", oneHourAgo),
+      orderBy("createdAt", "asc")
     )
     const querySnapshot = await getDocs(q)
     const recentChallenges = querySnapshot.docs.length
 
-    const allowed = recentChallenges < 5
-    const remainingAttempts = Math.max(0, 5 - recentChallenges)
-    const resetTime = recentChallenges > 0 ? querySnapshot.docs[0].data().createdAt + 2 * 60 * 60 * 1000 : undefined
+    const limit = 20
+    const allowed = recentChallenges < limit
+    const remainingAttempts = Math.max(0, limit - recentChallenges)
+    const resetTime = recentChallenges > 0 ? querySnapshot.docs[0].data().createdAt + 1 * 60 * 60 * 1000 : undefined
 
-    console.log(`[v0] Challenge throttle check for ${userId}: ${recentChallenges} sent in 2hrs, allowed: ${allowed}`)
+    console.log(`[v0] Challenge throttle check for ${userId}: ${recentChallenges} sent in 1hr, allowed: ${allowed}`)
     return { allowed, remainingAttempts, resetTime }
   } catch (error) {
-    console.error("[v0] Error checking challenge throttle:", error)
-    return { allowed: false, remainingAttempts: 0 }
+    console.error("[v0] Error checking challenge throttle (likely missing index):", error)
+    // Fail open during development/index-building so users aren't blocked
+    return { allowed: true, remainingAttempts: 10 }
   }
 }
 
@@ -280,6 +292,7 @@ export async function createFriendChallenge(
   creatorId: string,
   creatorUsername: string,
   creatorElo: number,
+  creatorLanguageRatings: LanguageRatings | undefined,
   creatorProfilePic: string | undefined,
   friendId: string,
   friendUsername: string,
@@ -302,6 +315,7 @@ export async function createFriendChallenge(
       creatorId,
       creatorUsername,
       creatorElo,
+      creatorLanguageRatings,
       creatorProfilePic,
       opponentId: friendId,
       opponentUsername: friendUsername,
@@ -393,7 +407,7 @@ export function listenToChallengeStatus(
     return unsubscribe
   } catch (error) {
     console.error("[v0] Error listening to challenge status:", error)
-    return () => {}
+    return () => { }
   }
 }
 

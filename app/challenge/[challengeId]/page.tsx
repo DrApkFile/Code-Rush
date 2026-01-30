@@ -29,6 +29,16 @@ export default function ChallengePage() {
 
         // Check if already accepted or in progress
         if (data?.status === "in_progress" || data?.status === "completed") {
+          // Only show arena if countdown seen (for participants)
+          const isParticipant = userProfile?.uid === data.creatorId || userProfile?.uid === data.opponentId
+          const hasSeenCountdown = sessionStorage.getItem(`countdown_seen_${challengeId}`)
+
+          if (data?.status === "in_progress" && isParticipant && !hasSeenCountdown) {
+            console.log('[Challenge] Initial load: Match in progress but countdown not seen. Redirecting...')
+            router.push(`/challenge/${challengeId}/countdown`)
+            return
+          }
+
           setAccepted(true)
           setMatchId(data.matchId)
 
@@ -50,6 +60,14 @@ export default function ChallengePage() {
     const unsubscribe = listenToChallenge(challengeId, (updatedChallenge) => {
       setChallenge(updatedChallenge)
       if (updatedChallenge?.status === "in_progress") {
+        // Only render arena if we've seen the countdown
+        const hasSeenCountdown = sessionStorage.getItem(`countdown_seen_${challengeId}`)
+        if (!hasSeenCountdown) {
+          console.log('[Challenge] Match in progress but countdown not seen. Redirecting...')
+          router.push(`/challenge/${challengeId}/countdown`)
+          return
+        }
+
         setAccepted(true)
         setMatchId(updatedChallenge.matchId)
 
@@ -77,6 +95,7 @@ export default function ChallengePage() {
         userProfile.uid,
         opponentUsername,
         opponentElo,
+        userProfile.languageRatings,
         opponentProfilePic,
       )
       setMatchId(newMatchId)
@@ -88,7 +107,7 @@ export default function ChallengePage() {
       } catch (e) {
         console.warn('[v0] Could not set sessionStorage currentChallengeId', e)
       }
-      router.push(`/challenge/${newMatchId}/countdown`)
+      router.push(`/challenge/${challengeId}/countdown`)
     } catch (error) {
       console.error("Error accepting challenge:", error)
     } finally {
@@ -164,8 +183,20 @@ export default function ChallengePage() {
           </div>
         </div>
 
-        {/* Accept Button */}
-        {!isCreator && !isOpponent && (
+        {/* Accept Button or Login CTA */}
+        {!userProfile ? (
+          <div className="space-y-3">
+            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 p-3 rounded-lg text-sm text-amber-800 dark:text-amber-200 mb-4">
+              You need an account to accept this challenge.
+            </div>
+            <Button onClick={() => router.push(`/signup?redirect=/challenge/${challengeId}`)} size="lg" className="w-full">
+              Sign up to Play
+            </Button>
+            <Button onClick={() => router.push(`/login?redirect=/challenge/${challengeId}`)} variant="ghost" size="sm" className="w-full">
+              Already have an account? Login
+            </Button>
+          </div>
+        ) : !isCreator && !isOpponent && (
           <Button onClick={handleAcceptChallenge} disabled={accepting} size="lg" className="w-full">
             {accepting ? "Accepting..." : "Accept Challenge"}
           </Button>
