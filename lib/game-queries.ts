@@ -97,7 +97,7 @@ export async function fetchRandomQuestions(
   try {
     // Build query with language and format filters
     const queryConstraints: any[] = []
-    if (language) {
+    if (language && (language as any) !== "random") {
       queryConstraints.push(where("language", "==", language))
     }
     if (format) {

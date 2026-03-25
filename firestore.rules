@@ -177,11 +177,9 @@ service cloud.firestore {
       allow update: if isAuthenticated() && (
         resource.data.player1.uid == request.auth.uid ||
         (resource.data.player2 != null && resource.data.player2.uid == request.auth.uid) ||
-        // Allow anyone if they are currently an "empty" participant in a friend match (rare spectator/join case)
+        // Allow anyone if they are currently an "empty" participant in a friend match (joining case)
         resource.data.mode == 'friend'
-      ) &&
-      request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['player1', 'player1.answers', 'player2', 'player2.answers', 'status', 'endedAt', 'winner', 'questions', 'rematch', 'startedAt', 'challengeMode', 'results', 'player1.ready', 'player2.ready']);
+      );
     }
 
     // Solo matches collection - canonical final match records for solo games

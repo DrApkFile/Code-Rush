@@ -240,8 +240,10 @@ export async function createMatch(
 ): Promise<string> {
   try {
     // Optimized: Check cache first for faster start
-    const formatArg = challengeMode === "all" ? undefined : (challengeMode as any)
+    const validFormats = ["MCQ", "Fill in the Blank", "Fix the Code"]
+    const formatArg = validFormats.includes(challengeMode || "") ? (challengeMode as any) : undefined
     const cached = await getCachedQuestions(language, formatArg)
+    console.log(`[v0] createMatch triggering with language: ${language}, mode: ${mode}, challengeMode: ${challengeMode}, formatArg: ${formatArg}`)
     const questions = cached.length >= 20
       ? cached.slice(0, 20)
       : await fetchQuestionsFromGame(language, formatArg, 20)
