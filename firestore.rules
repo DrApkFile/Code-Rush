@@ -181,7 +181,7 @@ service cloud.firestore {
         resource.data.mode == 'friend'
       ) &&
       request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['player1', 'player2', 'status', 'endedAt', 'winner', 'questions', 'rematch', 'startedAt', 'challengeMode', 'results']);
+        .hasAny(['player1', 'player1.answers', 'player2', 'player2.answers', 'status', 'endedAt', 'winner', 'questions', 'rematch', 'startedAt', 'challengeMode', 'results', 'player1.ready', 'player2.ready']);
     }
 
     // Solo matches collection - canonical final match records for solo games
