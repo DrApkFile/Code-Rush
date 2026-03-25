@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2 } from "lucide-react"
-import { listenToMatch, updateMatchPlayerAnswer, completeMatch, appendMatchQuestions, updateMatchPlayerReady, startMatch, type Match } from "@/lib/multiplayer-queries"
+import { listenToMatch, updateMatchPlayerAnswer, completeMatch, appendMatchQuestions, updateMatchPlayerReady, startMatch, updateMatchPlayerIndex, type Match } from "@/lib/multiplayer-queries"
 import { useAuth } from "@/lib/auth-context"
 import FriendResultsModal from "./friend-results-modal"
 
@@ -138,6 +138,13 @@ export default function FriendGameArena({ matchId }: FriendGameArenaProps) {
       setGameStarted(true)
     }
   }, [match, gameStarted])
+
+  // Sync current index for spectators
+  useEffect(() => {
+    if (gameStarted && !gameEnded) {
+      updateMatchPlayerIndex(matchId, playerNumber, currentQuestionIndex)
+    }
+  }, [currentQuestionIndex, gameStarted, gameEnded, matchId, playerNumber])
 
   // Infinite Scroll Check
   useEffect(() => {

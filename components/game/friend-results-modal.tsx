@@ -8,9 +8,10 @@ import { Check, X as XIcon, AlertCircle, Loader2 } from "lucide-react"
 
 interface FriendResultsModalProps {
   match: any
+  isSpectator?: boolean
 }
 
-export default function FriendResultsModal({ match }: FriendResultsModalProps) {
+export default function FriendResultsModal({ match, isSpectator = false }: FriendResultsModalProps) {
   const router = useRouter()
   const { userProfile } = useAuth()
   const [requesting, setRequesting] = useState(false)
@@ -20,6 +21,7 @@ export default function FriendResultsModal({ match }: FriendResultsModalProps) {
   const [declineRedirectCount, setDeclineRedirectCount] = useState<number | null>(null)
 
   const isPlayer1 = userProfile?.uid === match.player1.uid
+  const isPlayer2 = userProfile?.uid === match.player2?.uid
   const playerNumber = isPlayer1 ? 1 : 2
 
   const player1Accuracy = match.player1.correctAnswers > 0
@@ -290,64 +292,74 @@ export default function FriendResultsModal({ match }: FriendResultsModalProps) {
 
         {/* Actions */}
         <div className="space-y-4 pt-2">
-          {opponentRequested && !iRequested && !match.rematch?.declined && (
-            <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div className="flex items-center gap-3">
-                <AlertCircle className="w-5 h-5 text-primary" />
-                <p className="text-sm font-bold text-foreground">Opponent wants a rematch!</p>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  onClick={handleRematchClick}
-                  variant="default"
-                  size="sm"
-                  className="font-bold h-9 bg-green-600 hover:bg-green-700"
-                >
-                  Accept
-                </Button>
-                <Button
-                  onClick={handleDeclineRematch}
-                  variant="outline"
-                  size="sm"
-                  className="font-bold h-9 border-red-200 text-red-600 hover:bg-red-50"
-                >
-                  Decline
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {declineRedirectCount !== null && (
-            <div className="bg-red-50 border border-red-200 p-4 rounded-xl animate-pulse">
-              <p className="text-sm font-bold text-red-600 text-center">
-                Rematch Declined. Returning to dashboard in {declineRedirectCount}s...
+          {isSpectator ? (
+            <div className="bg-muted/30 p-4 rounded-xl text-center">
+              <p className="text-sm font-medium text-muted-foreground">
+                Automatic redirection to rematch is active for spectators.
               </p>
             </div>
+          ) : (
+            <>
+              {opponentRequested && !iRequested && !match.rematch?.declined && (
+                <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="w-5 h-5 text-primary" />
+                    <p className="text-sm font-bold text-foreground">Opponent wants a rematch!</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      onClick={handleRematchClick}
+                      variant="default"
+                      size="sm"
+                      className="font-bold h-9 bg-green-600 hover:bg-green-700"
+                    >
+                      Accept
+                    </Button>
+                    <Button
+                      onClick={handleDeclineRematch}
+                      variant="outline"
+                      size="sm"
+                      className="font-bold h-9 border-red-200 text-red-600 hover:bg-red-50"
+                    >
+                      Decline
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {declineRedirectCount !== null && (
+                <div className="bg-red-50 border border-red-200 p-4 rounded-xl animate-pulse">
+                  <p className="text-sm font-bold text-red-600 text-center">
+                    Rematch Declined. Returning to dashboard in {declineRedirectCount}s...
+                  </p>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3">
+                {!iRequested && !match.rematch?.declined && declineRedirectCount === null ? (
+                  <Button
+                    onClick={handleRematchClick}
+                    className="w-full h-12 text-lg font-bold shadow-lg hover:shadow-primary/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                    disabled={requesting}
+                  >
+                    {requesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Request Rematch"}
+                  </Button>
+                ) : (
+                  <Button disabled className="w-full h-12 text-lg font-bold bg-muted text-muted-foreground">
+                    {match.rematch?.newMatchId ? "Joining..." : (match.rematch?.declined ? "Rematch Declined" : (rematchStatus || "Waiting for Opponent..."))}
+                  </Button>
+                )}
+              </div>
+            </>
           )}
 
-          <div className="flex flex-col gap-3">
-            {!iRequested && !match.rematch?.declined && declineRedirectCount === null ? (
-              <Button
-                onClick={handleRematchClick}
-                className="w-full h-12 text-lg font-bold shadow-lg hover:shadow-primary/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
-                disabled={requesting}
-              >
-                {requesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Request Rematch"}
-              </Button>
-            ) : (
-              <Button disabled className="w-full h-12 text-lg font-bold bg-muted text-muted-foreground">
-                {match.rematch?.newMatchId ? "Joining..." : (match.rematch?.declined ? "Rematch Declined" : (rematchStatus || "Waiting for Opponent..."))}
-              </Button>
-            )}
-
-            <div className="flex gap-2">
-              <Button onClick={() => setShowReview(true)} variant="outline" className="flex-1 h-11 font-bold">
-                Review Match
-              </Button>
-              <Button onClick={() => router.push("/dashboard")} variant="ghost" className="flex-1 h-11 font-bold text-muted-foreground">
-                Dashboard
-              </Button>
-            </div>
+          <div className="flex gap-2">
+            <Button onClick={() => setShowReview(true)} variant="outline" className="flex-1 h-11 font-bold">
+              Review Match
+            </Button>
+            <Button onClick={() => router.push("/dashboard")} variant="ghost" className="flex-1 h-11 font-bold text-muted-foreground">
+              Dashboard
+            </Button>
           </div>
         </div>
       </div>

@@ -123,6 +123,7 @@ export async function acceptChallenge(
         wrongAnswers: 0,
         answers: new Array(questions.length).fill(null),
         ready: false,
+        currentQuestionIndex: 0,
       },
       player2: {
         uid: opponentId,
@@ -134,6 +135,7 @@ export async function acceptChallenge(
         wrongAnswers: 0,
         answers: new Array(questions.length).fill(null),
         ready: false,
+        currentQuestionIndex: 0,
       },
       language: challenge.language,
       mode: "friend",

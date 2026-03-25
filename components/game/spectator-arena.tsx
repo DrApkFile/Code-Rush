@@ -4,6 +4,8 @@ import { useEffect, useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { listenToMatch, type Match } from "@/lib/multiplayer-queries"
 import { Button } from "@/components/ui/button"
+import FriendResultsModal from "./friend-results-modal"
+import { Loader2 } from "lucide-react"
 
 interface SpectatorArenaProps {
   matchId: string
@@ -12,8 +14,7 @@ interface SpectatorArenaProps {
 
 export default function SpectatorArena({ matchId, spectatorUsername }: SpectatorArenaProps) {
   const router = useRouter()
-  const [match, setMatch] = useState<any>(null)
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
+  const [match, setMatch] = useState<Match | null>(null)
   const [timeLeft, setTimeLeft] = useState(0)
   const [gameEnded, setGameEnded] = useState(false)
   const hasInitialized = useRef(false)
@@ -27,12 +28,18 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
         setGameEnded(true)
       }
 
+      // Rematch redirection for spectators
+      if (updatedMatch.rematch?.newMatchId) {
+        console.log('[Spectator] Rematch detected! Redirecting to:', updatedMatch.rematch.newMatchId)
+        router.push(`/challenge/${updatedMatch.rematch.newMatchId}`)
+      }
+
       // Calculate time for spectators
       if (updatedMatch.status === "in_progress" && !hasInitialized.current) {
         const rawMode = updatedMatch.challengeMode || updatedMatch.mode
         let modeTime = 3
         if (rawMode) {
-          const modeStr = String(rawMode).replace("-", "")
+          const modeStr = String(rawMode).replace("-", "").toLowerCase()
           if (modeStr === "3min") modeTime = 3
           else if (modeStr === "5min") modeTime = 5
           else if (modeStr === "survival") modeTime = 999
@@ -42,19 +49,10 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
         setTimeLeft(modeTime * 60)
         hasInitialized.current = true
       }
-
-      // Sync current question based on max progress
-      const maxQuestionIndex = Math.max(
-        updatedMatch.player1?.answers?.findIndex((a: any) => a === null) || 0,
-        updatedMatch.player2?.answers?.findIndex((a: any) => a === null) || 0,
-      )
-      if (maxQuestionIndex > 0) {
-        setCurrentQuestionIndex(Math.min(maxQuestionIndex, updatedMatch.questions.length - 1))
-      }
     })
 
     return () => unsubscribe()
-  }, [matchId]) // Removed timeLeft to prevent rapid resubscription
+  }, [matchId, router])
 
   // Timer countdown effect
   useEffect(() => {
@@ -71,205 +69,156 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
 
   if (!match) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-lg text-muted-foreground">Loading match...</p>
+      <div className="flex flex-col items-center justify-center min-h-screen space-y-4">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <p className="text-lg text-muted-foreground">Joining arena as spectator...</p>
       </div>
     )
   }
 
-  if (gameEnded) {
+  // Show results modal for spectators when game ends
+  if (gameEnded || match.status === "completed") {
+    return <FriendResultsModal match={match} isSpectator={true} />
+  }
+
+  const renderPlayerView = (playerNum: 1 | 2) => {
+    const player = playerNum === 1 ? match.player1 : match.player2
+    if (!player) return null
+
+    const qIndex = player.currentQuestionIndex || 0
+    const question = match.questions[qIndex]
+    const playerAnswer = player.answers[qIndex]
+
     return (
-      <div className="min-h-screen bg-background p-4 flex items-center justify-center">
-        <div className="bg-card border border-border rounded-lg p-8 max-w-md w-full text-center space-y-6">
-          <h2 className="text-2xl font-bold text-foreground">Match Complete!</h2>
+      <div className="bg-card border border-border rounded-lg p-6 space-y-4 shadow-sm">
+        <div className="flex justify-between items-center border-b pb-3 border-border">
+          <div>
+            <h3 className="font-bold text-foreground text-lg">{player.username}</h3>
+            <p className="text-xs text-muted-foreground">Rating: {player.languageRatings?.[match.language] || 1200}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-2xl font-bold text-primary">{player.score}</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-tight">Current Score</p>
+          </div>
+        </div>
 
+        {question ? (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-muted p-4 rounded-lg">
-                <p className="text-sm text-muted-foreground mb-2">{match.player1.username}</p>
-                <p className="text-2xl font-bold text-foreground">{match.player1.score}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {match.player1.correctAnswers}/{match.questions.length}
-                </p>
-              </div>
-
-              <div className="bg-muted p-4 rounded-lg">
-                <p className="text-sm text-muted-foreground mb-2">{match.player2?.username}</p>
-                <p className="text-2xl font-bold text-foreground">{match.player2?.score || 0}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {match.player2?.correctAnswers || 0}/{match.questions.length}
-                </p>
+            <div className="flex justify-between items-center">
+              <span className="text-xs bg-muted px-2 py-1 rounded-full text-muted-foreground">
+                Question {qIndex + 1} of {match.questions.length}
+              </span>
+              <div className="flex gap-2">
+                <span className="text-xs text-green-600 font-medium">{player.correctAnswers} ✓</span>
+                <span className="text-xs text-red-500 font-medium">{player.wrongAnswers} ✗</span>
               </div>
             </div>
 
-            <div className="text-lg font-semibold text-primary">
-              {match.player1.score > (match.player2?.score || 0) ? match.player1.username : match.player2?.username}{" "}
-              Wins!
+            <div className="bg-muted/50 p-4 rounded-lg border border-border/50">
+              <p className="text-sm font-semibold text-foreground mb-4 leading-relaxed">{question.content}</p>
+
+              <div className="space-y-2">
+                {question.options.map((option: string, idx: number) => {
+                  const isCorrect = idx === question.correctAnswerIndex
+                  const isPlayerChoice = playerAnswer === idx
+
+                  let stateClass = "bg-background border-border"
+                  if (playerAnswer !== null && playerAnswer !== undefined) {
+                    if (isCorrect) stateClass = "bg-green-500/10 border-green-500 text-green-700 dark:text-green-400"
+                    else if (isPlayerChoice) stateClass = "bg-red-500/10 border-red-500 text-red-700 dark:text-red-400"
+                  }
+
+                  return (
+                    <div
+                      key={idx}
+                      className={`p-3 rounded-md border text-sm transition-all flex items-center gap-3 ${stateClass}`}
+                    >
+                      <span className="w-6 h-6 flex items-center justify-center rounded-full bg-muted text-[10px] font-bold">
+                        {String.fromCharCode(65 + idx)}
+                      </span>
+                      <span className="flex-1">{option}</span>
+                      {playerAnswer !== null && playerAnswer !== undefined && (
+                        <div className="ml-auto">
+                          {isCorrect && <span className="text-xs font-bold text-green-600">✓</span>}
+                          {isPlayerChoice && !isCorrect && <span className="text-xs font-bold text-red-500">✗</span>}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {playerAnswer === null || playerAnswer === undefined ? (
+                <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground animate-pulse">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span>Thinking...</span>
+                </div>
+              ) : (
+                <div className="mt-4 text-center">
+                  <span className={`text-xs font-bold px-2 py-1 rounded-full ${playerAnswer === question.correctAnswerIndex ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {playerAnswer === question.correctAnswerIndex ? 'CORRECT' : 'WRONG'}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="h-64 flex flex-col items-center justify-center text-muted-foreground italic border-2 border-dashed border-border rounded-lg">
+            <Loader2 className="h-8 w-8 animate-spin mb-2 opacity-20" />
+            <p>Waiting for questions...</p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-6">
+      <div className="max-w-7xl mx-auto space-y-8">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row items-center justify-between gap-6 bg-card border border-border rounded-2xl p-6 shadow-xl backdrop-blur-sm bg-white/80 dark:bg-slate-900/80">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+              <span className="font-bold text-xl">CR</span>
+            </div>
+            <div>
+              <h1 className="text-xl font-black tracking-tighter text-foreground uppercase italic">Spectator Mode</h1>
+              <p className="text-xs text-muted-foreground font-medium">Viewing as <span className="text-primary">{spectatorUsername}</span></p>
             </div>
           </div>
 
-          <Button onClick={() => router.push("/dashboard")} className="w-full">
-            Back to Dashboard
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
-  const question = match.questions[currentQuestionIndex]
-  const player1Answer = match.player1.answers[currentQuestionIndex]
-  const player2Answer = match.player2?.answers[currentQuestionIndex]
-
-  return (
-    <div className="min-h-screen bg-background p-4">
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="bg-card border border-border rounded-lg p-4">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">Spectating as</p>
-              <p className="font-semibold text-foreground">{spectatorUsername}</p>
-            </div>
-
-            <div className="text-center">
-              <p className="text-sm text-muted-foreground">Timer</p>
-              <p className="text-2xl font-bold text-foreground">
+          <div className="flex items-center gap-8">
+            <div className="text-center px-6 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl border border-border">
+              <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mb-1">Time Remaining</p>
+              <p className={`text-3xl font-black tabular-nums ${timeLeft < 30 ? 'text-red-500 animate-pulse' : 'text-foreground'}`}>
                 {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, "0")}
               </p>
             </div>
-
-            <div className="text-right">
-              <p className="text-sm text-muted-foreground">
-                Question {currentQuestionIndex + 1} of {match.questions.length}
-              </p>
-            </div>
           </div>
 
-          {/* Split Score Display */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-muted p-3 rounded-lg text-center">
-              <p className="text-xs text-muted-foreground mb-1">{match.player1.username}</p>
-              <p className="text-2xl font-bold text-foreground">{match.player1.score}</p>
-              <div className="flex justify-center gap-2 mt-1">
-                <span className="text-xs text-green-600">{match.player1.correctAnswers} ✓</span>
-                <span className="text-xs text-muted-foreground border-l pl-2">
-                  Q{match.player1.answers.findIndex((a: any) => a === null) === -1 ? match.questions.length : match.player1.answers.findIndex((a: any) => a === null) + 1}
-                </span>
-              </div>
+          <div className="hidden lg:block text-right">
+            <div className="flex items-center gap-2 text-green-500 text-xs font-bold uppercase">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+              </span>
+              Live Sync Active
             </div>
-
-            <div className="bg-muted p-3 rounded-lg text-center">
-              <p className="text-xs text-muted-foreground mb-1">{match.player2?.username}</p>
-              <p className="text-2xl font-bold text-foreground">{match.player2?.score || 0}</p>
-              <div className="flex justify-center gap-2 mt-1">
-                <span className="text-xs text-green-600">{match.player2?.correctAnswers || 0} ✓</span>
-                <span className="text-xs text-muted-foreground border-l pl-2">
-                  Q{match.player2 ? (match.player2.answers.findIndex((a: any) => a === null) === -1 ? match.questions.length : match.player2.answers.findIndex((a: any) => a === null) + 1) : 0}
-                </span>
-              </div>
-            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">Multiplayer Match v2.0</p>
           </div>
         </div>
 
-        {/* Split Question View */}
-        <div className="grid grid-cols-2 gap-4">
-          {/* Player 1 */}
-          <div className="bg-card border border-border rounded-lg p-6 space-y-4">
-            <h3 className="font-semibold text-foreground">{match.player1.username}'s View</h3>
-
-            <div className="space-y-3 bg-muted p-4 rounded-lg">
-              <p className="text-sm font-medium text-foreground">{question.content}</p>
-              <div className="space-y-2">
-                {question.options.map((option: string, idx: number) => (
-                  <div
-                    key={idx}
-                    className={`p-3 rounded border transition-colors ${idx === question.correctAnswerIndex
-                      ? "bg-green-500/20 border-green-500 text-green-700"
-                      : player1Answer === idx
-                        ? "bg-red-500/20 border-red-500 text-red-700"
-                        : "bg-background border-border"
-                      }`}
-                  >
-                    <div className="flex items-start gap-2">
-                      <span className="text-xs font-semibold">{String.fromCharCode(65 + idx)}.</span>
-                      <span className="text-sm">{option}</span>
-                      {idx === question.correctAnswerIndex && <span className="text-xs ml-auto">✓ Correct</span>}
-                      {player1Answer === idx && idx !== question.correctAnswerIndex && (
-                        <span className="text-xs ml-auto">✗ Wrong</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <div className="text-xs bg-green-500/20 text-green-700 px-2 py-1 rounded-full">
-                Correct: {match.player1.correctAnswers}
-              </div>
-              <div className="text-xs bg-red-500/20 text-red-700 px-2 py-1 rounded-full">
-                Wrong: {match.player1.wrongAnswers}
-              </div>
-            </div>
-          </div>
-
-          {/* Player 2 */}
-          <div className="bg-card border border-border rounded-lg p-6 space-y-4">
-            <h3 className="font-semibold text-foreground">{match.player2?.username}'s View</h3>
-
-            <div className="space-y-3 bg-muted p-4 rounded-lg">
-              <p className="text-sm font-medium text-foreground">{question.content}</p>
-              <div className="space-y-2">
-                {question.options.map((option: string, idx: number) => (
-                  <div
-                    key={idx}
-                    className={`p-3 rounded border transition-colors ${idx === question.correctAnswerIndex
-                      ? "bg-green-500/20 border-green-500 text-green-700"
-                      : player2Answer === idx
-                        ? "bg-red-500/20 border-red-500 text-red-700"
-                        : "bg-background border-border"
-                      }`}
-                  >
-                    <div className="flex items-start gap-2">
-                      <span className="text-xs font-semibold">{String.fromCharCode(65 + idx)}.</span>
-                      <span className="text-sm">{option}</span>
-                      {idx === question.correctAnswerIndex && <span className="text-xs ml-auto">✓ Correct</span>}
-                      {player2Answer === idx && idx !== question.correctAnswerIndex && (
-                        <span className="text-xs ml-auto">✗ Wrong</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <div className="text-xs bg-green-500/20 text-green-700 px-2 py-1 rounded-full">
-                Correct: {match.player2?.correctAnswers || 0}
-              </div>
-              <div className="text-xs bg-red-500/20 text-red-700 px-2 py-1 rounded-full">
-                Wrong: {match.player2?.wrongAnswers || 0}
-              </div>
-            </div>
-          </div>
+        {/* Live Views */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {renderPlayerView(1)}
+          {renderPlayerView(2)}
         </div>
 
-        {/* Navigation */}
-        <div className="flex justify-center gap-2">
-          <Button
-            onClick={() => setCurrentQuestionIndex(Math.max(0, currentQuestionIndex - 1))}
-            disabled={currentQuestionIndex === 0}
-            variant="outline"
-          >
-            Previous
-          </Button>
-          <Button
-            onClick={() => setCurrentQuestionIndex(Math.min(match.questions.length - 1, currentQuestionIndex + 1))}
-            disabled={currentQuestionIndex === match.questions.length - 1}
-            variant="outline"
-          >
-            Next
-          </Button>
+        {/* Spectator Footer */}
+        <div className="flex justify-center flex-wrap gap-4">
+          <div className="px-4 py-2 bg-card border border-border rounded-full text-xs font-medium text-muted-foreground shadow-sm">
+            <span className="font-bold text-foreground">Tip:</span> Redirection to rematches is automatic. Sit back and enjoy!
+          </div>
         </div>
       </div>
     </div>

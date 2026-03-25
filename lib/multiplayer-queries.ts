@@ -33,6 +33,7 @@ export interface MatchPlayer {
   wrongAnswers: number
   answers: (number | null)[]
   ready: boolean
+  currentQuestionIndex: number // Track current question for spectators
 }
 
 
@@ -260,6 +261,7 @@ export async function createMatch(
         wrongAnswers: 0,
         answers: new Array(questions.length).fill(null),
         ready: false,
+        currentQuestionIndex: 0,
       },
       player2: {
         uid: player2Data.userId,
@@ -271,6 +273,7 @@ export async function createMatch(
         wrongAnswers: 0,
         answers: new Array(questions.length).fill(null),
         ready: false,
+        currentQuestionIndex: 0,
       },
       language,
       mode,
@@ -337,10 +340,27 @@ export async function updateMatchPlayerAnswer(
       [`${playerKey}.score`]: newScore,
       [`${playerKey}.correctAnswers`]: newCorrectCount,
       [`${playerKey}.wrongAnswers`]: newWrongCount,
+      [`${playerKey}.currentQuestionIndex`]: questionIndex,
     })
   } catch (error) {
     console.error("[v0] Error updating match answer:", error)
     throw error
+  }
+}
+
+// Update player current question index for spectators
+export async function updateMatchPlayerIndex(
+  matchId: string,
+  playerNumber: 1 | 2,
+  questionIndex: number,
+): Promise<void> {
+  try {
+    const matchRef = doc(db, "matches", matchId)
+    await updateDoc(matchRef, {
+      [`player${playerNumber}.currentQuestionIndex`]: questionIndex,
+    })
+  } catch (error) {
+    console.error("[v0] Error updating match player index:", error)
   }
 }
 
