@@ -30,17 +30,6 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
         setGameEnded(true)
       }
 
-      // Rematch redirection for spectators with delay and notification
-      if (updatedMatch.rematch?.newMatchId && !redirecting) {
-        console.log('[Spectator] Rematch detected! Starting transition to:', updatedMatch.rematch.newMatchId)
-        setRedirecting(true)
-
-        // 3 second delay to let spectator see the results/notification
-        redirectTimeoutRef.current = setTimeout(() => {
-          router.push(`/challenge/${updatedMatch.rematch?.newMatchId}`)
-        }, 3000)
-      }
-
       // Calculate time for spectators - Sync with actual startedAt
       if (updatedMatch.status === "in_progress" && updatedMatch.startedAt) {
         const rawMode = updatedMatch.challengeMode || updatedMatch.mode
@@ -53,19 +42,30 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
         }
 
         const totalSeconds = modeMinutes * 60
+        // Use a conservative drift adjustment if needed, but primarily trust server status
         const elapsedSeconds = Math.floor((Date.now() - updatedMatch.startedAt) / 1000)
         const remaining = Math.max(0, totalSeconds - elapsedSeconds)
 
-        console.log('[Spectator] Syncing timer. Elapsed:', elapsedSeconds, 'Remaining:', remaining)
         setTimeLeft(remaining)
       }
     })
 
-    return () => {
-      unsubscribe()
-      if (redirectTimeoutRef.current) clearTimeout(redirectTimeoutRef.current)
+    return () => unsubscribe()
+  }, [matchId, router]) // Removed redirecting!
+
+  // Managed Rematch Redirection
+  useEffect(() => {
+    if (match?.rematch?.newMatchId && !redirecting) {
+      console.log('[Spectator] Rematch detected! Starting transition to:', match.rematch.newMatchId)
+      setRedirecting(true)
+
+      const timeout = setTimeout(() => {
+        router.push(`/challenge/${match.rematch?.newMatchId}`)
+      }, 3000)
+
+      return () => clearTimeout(timeout)
     }
-  }, [matchId, router, redirecting])
+  }, [match?.rematch?.newMatchId, redirecting, router])
 
   // Timer countdown effect
   useEffect(() => {
@@ -181,6 +181,13 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
   }
 
   const showResults = gameEnded || match.status === "completed"
+
+  // Ensure gameEnded syncs with status
+  useEffect(() => {
+    if (match.status === "completed" && !gameEnded) {
+      setGameEnded(true)
+    }
+  }, [match.status, gameEnded])
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-6 relative">
