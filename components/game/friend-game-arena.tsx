@@ -95,8 +95,26 @@ export default function FriendGameArena({ matchId }: FriendGameArenaProps) {
       // Update game state
       if (updatedMatch.status === "in_progress") {
         setGameStarted(true)
+
+        // SYNC TIMER: If game is in progress and startedAt exists, sync the clock
+        if (updatedMatch.startedAt) {
+          const rawMode = updatedMatch.challengeMode || updatedMatch.mode
+          let modeMinutes = 3
+          if (rawMode) {
+            const modeStr = String(rawMode).replace("-", "").toLowerCase()
+            if (modeStr === "3min") modeMinutes = 3
+            else if (modeStr === "5min") modeMinutes = 5
+            else if (modeStr === "survival") modeMinutes = 999
+          }
+          const totalSeconds = modeMinutes * 60
+          const elapsed = Math.floor((Date.now() - updatedMatch.startedAt) / 1000)
+          const remaining = Math.max(0, totalSeconds - elapsed)
+          console.log(`[Arena] Syncing player timer. Calculated remaining: ${remaining}s`)
+          setTimeLeft(remaining)
+        }
       } else if (updatedMatch.status === "completed") {
         setGameEnded(true)
+        setTimeLeft(0)
       }
 
       // Check if both players are ready and we need to start

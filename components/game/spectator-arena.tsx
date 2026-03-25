@@ -76,7 +76,10 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
     if (match && match.status === "in_progress" && !gameEnded) {
       const timer = setInterval(() => {
         setTimeLeft((prevTime) => {
-          if (prevTime <= 0) return 0
+          if (prevTime <= 1) {
+            setGameEnded(true)
+            return 0
+          }
           return prevTime - 1
         })
       }, 1000)
