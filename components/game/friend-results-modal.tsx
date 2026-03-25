@@ -156,9 +156,17 @@ export default function FriendResultsModal({ match, isSpectator = false }: Frien
                           </div>
                           <div className="flex-1 font-medium">{opt}</div>
                           <div className="flex flex-col items-end gap-1">
-                            {isCorrectOpt && <span className="text-green-600 text-[10px] font-bold uppercase tracking-wider bg-green-100 px-2 py-0.5 rounded">Correct</span>}
-                            {isMyOpt && !isCorrectOpt && <span className="text-red-600 text-[10px] font-bold uppercase tracking-wider bg-red-100 px-2 py-0.5 rounded">Your answer</span>}
-                            {isOppOpt && <span className="text-primary/60 text-[9px] font-bold uppercase tracking-wider bg-primary/5 px-2 py-0.5 rounded">Opponent</span>}
+                            {isCorrectOpt && <span className="text-green-600 text-[10px] font-bold uppercase tracking-wider bg-green-100 px-2 py-0.5 rounded">Correct Answer</span>}
+                            {isMyOpt && !isCorrectOpt && (
+                              <span className="text-red-600 text-[10px] font-bold uppercase tracking-wider bg-red-100 px-2 py-0.5 rounded">
+                                {isSpectator ? `${match.player1.username}'s Answer` : 'Your Answer'}
+                              </span>
+                            )}
+                            {isOppOpt && (
+                              <span className="text-primary/60 text-[9px] font-bold uppercase tracking-wider bg-primary/5 px-2 py-0.5 rounded">
+                                {isSpectator ? `${match.player2?.username}'s Answer` : 'Opponent'}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>

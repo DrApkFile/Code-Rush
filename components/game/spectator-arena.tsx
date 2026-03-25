@@ -34,20 +34,23 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
         router.push(`/challenge/${updatedMatch.rematch.newMatchId}`)
       }
 
-      // Calculate time for spectators
-      if (updatedMatch.status === "in_progress" && !hasInitialized.current) {
+      // Calculate time for spectators - Sync with actual startedAt
+      if (updatedMatch.status === "in_progress" && updatedMatch.startedAt) {
         const rawMode = updatedMatch.challengeMode || updatedMatch.mode
-        let modeTime = 3
+        let modeMinutes = 3
         if (rawMode) {
           const modeStr = String(rawMode).replace("-", "").toLowerCase()
-          if (modeStr === "3min") modeTime = 3
-          else if (modeStr === "5min") modeTime = 5
-          else if (modeStr === "survival") modeTime = 999
+          if (modeStr === "3min") modeMinutes = 3
+          else if (modeStr === "5min") modeMinutes = 5
+          else if (modeStr === "survival") modeMinutes = 999
         }
 
-        console.log('[Spectator] Starting timer with minutes:', modeTime)
-        setTimeLeft(modeTime * 60)
-        hasInitialized.current = true
+        const totalSeconds = modeMinutes * 60
+        const elapsedSeconds = Math.floor((Date.now() - updatedMatch.startedAt) / 1000)
+        const remaining = Math.max(0, totalSeconds - elapsedSeconds)
+
+        console.log('[Spectator] Syncing timer. Elapsed:', elapsedSeconds, 'Remaining:', remaining)
+        setTimeLeft(remaining)
       }
     })
 
