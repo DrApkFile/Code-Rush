@@ -204,38 +204,44 @@ export default function FriendResultsModal({ match, isSpectator = false }: Frien
             <Button variant="outline" onClick={() => setShowReview(false)}>Back to Results</Button>
           </div>
 
-          <ScrollArea className="flex-1 p-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {match.questions.map((q: any, idx: number) => {
-                const myAnswerIdx = isPlayer1 ? match.player1.answers[idx] : match.player2?.answers[idx]
-                const isCorrect = myAnswerIdx === q.correctAnswerIndex
-                const answered = myAnswerIdx !== null && myAnswerIdx !== undefined
+          <div className="flex-1 min-h-0">
+            <div className="h-full overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-primary/10 hover:scrollbar-thumb-primary/20">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pb-8">
+                {match.questions.map((q: any, idx: number) => {
+                  const myAnswerIdx = isPlayer1 ? match.player1.answers[idx] : match.player2?.answers[idx]
+                  const isCorrect = myAnswerIdx === q.correctAnswerIndex
+                  const answered = myAnswerIdx !== null && myAnswerIdx !== undefined
 
-                return (
-                  <div
-                    key={idx}
-                    onClick={() => setSelectedReviewIndex(idx)}
-                    className="border rounded-lg p-4 mb-2 bg-card cursor-pointer hover:bg-accent/50 transition-colors shadow-sm"
-                  >
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-semibold text-sm">Question {idx + 1}</span>
-                      <span className="text-xs text-muted-foreground">{q.difficulty || "Medium"}</span>
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => setSelectedReviewIndex(idx)}
+                      className="border rounded-lg p-4 bg-card cursor-pointer hover:bg-accent/50 transition-all shadow-sm flex flex-col h-full border-border/60 hover:border-primary/30"
+                    >
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-semibold text-sm">Question {idx + 1}</span>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{q.difficulty || "Medium"}</span>
+                      </div>
+                      <div className="mb-3 text-sm text-foreground line-clamp-2 leading-relaxed flex-1">{q.content}</div>
+                      <div className="flex gap-2 items-center mt-auto">
+                        {answered ? (
+                          <div className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-bold ${isCorrect ? "bg-green-100/50 text-green-700" : "bg-red-100/50 text-red-700"}`}>
+                            {isCorrect ? <Check className="w-3 h-3" /> : <XIcon className="w-3 h-3" />}
+                            {isCorrect ? "Correct" : "Wrong"}
+                          </div>
+                        ) : (
+                          <span className="text-xs font-bold px-2 py-1 rounded bg-muted text-muted-foreground flex items-center gap-1.5">
+                            <AlertCircle className="w-3 h-3" />
+                            Skipped
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="mb-2 text-sm text-foreground line-clamp-2">{q.content}</div>
-                    <div className="flex gap-2 items-center">
-                      {answered ? (
-                        <span className={`text-sm font-semibold px-2 py-1 rounded ${isCorrect ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-                          {isCorrect ? "Correct" : "Wrong"}
-                        </span>
-                      ) : (
-                        <span className="text-sm font-semibold px-2 py-1 rounded bg-muted text-muted-foreground">Skipped</span>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+                  )
+                })}
+              </div>
             </div>
-          </ScrollArea>
+          </div>
 
           {selectedReviewIndex !== null && <QuestionReviewModal idx={selectedReviewIndex} />}
         </div>
