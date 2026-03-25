@@ -37,7 +37,7 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
 
         // 3 second delay to let spectator see the results/notification
         redirectTimeoutRef.current = setTimeout(() => {
-          router.push(`/challenge/${updatedMatch.rematch.newMatchId}`)
+          router.push(`/challenge/${updatedMatch.rematch?.newMatchId}`)
         }, 3000)
       }
 
@@ -61,8 +61,11 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
       }
     })
 
-    return () => unsubscribe()
-  }, [matchId, router])
+    return () => {
+      unsubscribe()
+      if (redirectTimeoutRef.current) clearTimeout(redirectTimeoutRef.current)
+    }
+  }, [matchId, router, redirecting])
 
   // Timer countdown effect
   useEffect(() => {
@@ -84,11 +87,6 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
         <p className="text-lg text-muted-foreground">Joining arena as spectator...</p>
       </div>
     )
-  }
-
-  // Show results modal for spectators when game ends
-  if (gameEnded || match.status === "completed") {
-    return <FriendResultsModal match={match} isSpectator={true} />
   }
 
   const renderPlayerView = (playerNum: 1 | 2) => {
@@ -182,55 +180,77 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
     )
   }
 
+  const showResults = gameEnded || match.status === "completed"
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-6">
-      <div className="max-w-7xl mx-auto space-y-8">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row items-center justify-between gap-6 bg-card border border-border rounded-2xl p-6 shadow-xl backdrop-blur-sm bg-white/80 dark:bg-slate-900/80">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-              <span className="font-bold text-xl">CR</span>
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-6 relative">
+      {/* Global Redirecting Overlay */}
+      {redirecting && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-background/60 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="bg-card p-8 rounded-2xl shadow-2xl border border-border text-center space-y-4 max-w-sm mx-auto">
+            <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
-            <div>
-              <h1 className="text-xl font-black tracking-tighter text-foreground uppercase italic">Spectator Mode</h1>
-              <p className="text-xs text-muted-foreground font-medium">Viewing as <span className="text-primary">{spectatorUsername}</span></p>
+            <h2 className="text-xl font-bold text-foreground italic uppercase tracking-tighter">Rematch Started!</h2>
+            <p className="text-muted-foreground text-sm font-medium">Sit tight, redirecting you to the next game now...</p>
+            <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-primary animate-pulse" style={{ width: '100%' }} />
             </div>
-          </div>
-
-          <div className="flex items-center gap-8">
-            <div className="text-center px-6 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl border border-border">
-              <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mb-1">Time Remaining</p>
-              <p className={`text-3xl font-black tabular-nums ${timeLeft < 30 ? 'text-red-500 animate-pulse' : 'text-foreground'}`}>
-                {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, "0")}
-              </p>
-            </div>
-          </div>
-
-          <div className="hidden lg:block text-right">
-            <div className="flex items-center gap-2 text-green-500 text-xs font-bold uppercase">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-              </span>
-              Live Sync Active
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-1">Multiplayer Match v2.0</p>
           </div>
         </div>
+      )}
 
-        {/* Live Views */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {renderPlayerView(1)}
-          {renderPlayerView(2)}
-        </div>
+      {showResults ? (
+        <FriendResultsModal match={match} isSpectator={true} />
+      ) : (
+        <div className="max-w-7xl mx-auto space-y-8">
+          {/* Header */}
+          <div className="flex flex-col md:flex-row items-center justify-between gap-6 bg-card border border-border rounded-2xl p-6 shadow-xl backdrop-blur-sm bg-white/80 dark:bg-slate-900/80">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                <span className="font-bold text-xl">CR</span>
+              </div>
+              <div>
+                <h1 className="text-xl font-black tracking-tighter text-foreground uppercase italic">Spectator Mode</h1>
+                <p className="text-xs text-muted-foreground font-medium">Viewing as <span className="text-primary">{spectatorUsername}</span></p>
+              </div>
+            </div>
 
-        {/* Spectator Footer */}
-        <div className="flex justify-center flex-wrap gap-4">
-          <div className="px-4 py-2 bg-card border border-border rounded-full text-xs font-medium text-muted-foreground shadow-sm">
-            <span className="font-bold text-foreground">Tip:</span> Redirection to rematches is automatic. Sit back and enjoy!
+            <div className="flex items-center gap-8">
+              <div className="text-center px-6 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl border border-border">
+                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mb-1">Time Remaining</p>
+                <p className={`text-3xl font-black tabular-nums ${timeLeft < 30 ? 'text-red-500 animate-pulse' : 'text-foreground'}`}>
+                  {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, "0")}
+                </p>
+              </div>
+            </div>
+
+            <div className="hidden lg:block text-right">
+              <div className="flex items-center gap-2 text-green-500 text-xs font-bold uppercase">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                Live Sync Active
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1">Multiplayer Match v2.0</p>
+            </div>
+          </div>
+
+          {/* Live Views */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {renderPlayerView(1)}
+            {renderPlayerView(2)}
+          </div>
+
+          {/* Spectator Footer */}
+          <div className="flex justify-center flex-wrap gap-4">
+            <div className="px-4 py-2 bg-card border border-border rounded-full text-xs font-medium text-muted-foreground shadow-sm">
+              <span className="font-bold text-foreground">Tip:</span> Redirection to rematches is automatic. Sit back and enjoy!
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
