@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, Suspense } from "react"
 import { useParams, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { getSoloMatch } from "@/lib/multiplayer-queries"
@@ -23,7 +23,7 @@ interface GameWithRating {
   status?: string
 }
 
-export default function SpectatorMatchReviewPage() {
+function MatchReviewContent() {
   const { matchId, userId } = useParams() as { matchId: string; userId: string }
   const searchParams = useSearchParams()
   const { userProfile } = useAuth()
@@ -135,11 +135,10 @@ export default function SpectatorMatchReviewPage() {
               {/* Rating Change or Indicator */}
               {game.ratingBefore !== undefined && game.ratingAfter !== undefined ? (
                 <div
-                  className={`p-4 rounded-lg text-center border-2 ${
-                    won
+                  className={`p-4 rounded-lg text-center border-2 ${won
                       ? "bg-green-50 border-green-200"
                       : "bg-red-50 border-red-200"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center justify-center gap-2 mb-1">
                     {won ? (
@@ -148,17 +147,15 @@ export default function SpectatorMatchReviewPage() {
                       <TrendingDown className="h-5 w-5 text-red-600" />
                     )}
                     <span
-                      className={`text-sm font-semibold ${
-                        won ? "text-green-600" : "text-red-600"
-                      }`}
+                      className={`text-sm font-semibold ${won ? "text-green-600" : "text-red-600"
+                        }`}
                     >
                       Rating
                     </span>
                   </div>
                   <div
-                    className={`text-3xl font-bold ${
-                      won ? "text-green-600" : "text-red-600"
-                    }`}
+                    className={`text-3xl font-bold ${won ? "text-green-600" : "text-red-600"
+                      }`}
                   >
                     {game.ratingAfter}
                   </div>
@@ -169,11 +166,10 @@ export default function SpectatorMatchReviewPage() {
                 </div>
               ) : (
                 <div
-                  className={`p-4 rounded-lg text-center border-2 ${
-                    won
+                  className={`p-4 rounded-lg text-center border-2 ${won
                       ? "bg-green-50 border-green-200"
                       : "bg-red-50 border-red-200"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center justify-center gap-2 mb-1">
                     {won ? (
@@ -182,17 +178,15 @@ export default function SpectatorMatchReviewPage() {
                       <TrendingDown className="h-5 w-5 text-red-600" />
                     )}
                     <span
-                      className={`text-sm font-semibold ${
-                        won ? "text-green-600" : "text-red-600"
-                      }`}
+                      className={`text-sm font-semibold ${won ? "text-green-600" : "text-red-600"
+                        }`}
                     >
                       Rating Change
                     </span>
                   </div>
                   <div
-                    className={`text-3xl font-bold ${
-                      won ? "text-green-600" : "text-red-600"
-                    }`}
+                    className={`text-3xl font-bold ${won ? "text-green-600" : "text-red-600"
+                      }`}
                   >
                     {won ? "+" : ""}{ratingChange}
                   </div>
@@ -241,5 +235,17 @@ export default function SpectatorMatchReviewPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function SpectatorMatchReviewPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex justify-center items-center min-h-screen bg-background">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    }>
+      <MatchReviewContent />
+    </Suspense>
   )
 }

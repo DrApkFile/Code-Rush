@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useAuth } from "@/lib/auth-context"
 import { useRouter, useSearchParams } from "next/navigation"
 import { createFriendChallenge } from "@/lib/friend-challenges"
@@ -8,8 +8,9 @@ import ChallengeSetup from "@/components/dashboard/challenge-setup"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/use-toast"
 import { getUserFriends, listenToFriendStatus, type Friend, type UserStatus } from "@/lib/friends-queries"
+import { Loader2 } from "lucide-react"
 
-export default function ChallengePage() {
+function ChallengeContent() {
   const { userProfile } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -59,6 +60,7 @@ export default function ChallengePage() {
         userProfile.uid,
         userProfile.username,
         userProfile.languageRatings?.overall || 400,
+        userProfile.languageRatings,
         userProfile.profilePicture,
         settings.opponentId || friendId || "",
         friend?.friendUsername || "",
@@ -113,7 +115,7 @@ export default function ChallengePage() {
           isLoading={loading}
           friendId={friendId || undefined}
           friendUsername={friend?.friendUsername}
-          disabled={friendId && !isOnline}
+          disabled={!!(friendId && !isOnline)}
         />
       )}
 
@@ -123,5 +125,20 @@ export default function ChallengePage() {
         </Button>
       )}
     </div>
+  )
+}
+
+export default function ChallengePage() {
+  return (
+    <Suspense fallback={
+      <div className="flex justify-center items-center min-h-[400px]">
+        <div className="text-center space-y-4">
+          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto" />
+          <p className="text-sm text-muted-foreground animate-pulse">Loading challenge arena...</p>
+        </div>
+      </div>
+    }>
+      <ChallengeContent />
+    </Suspense>
   )
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { listenToChallengeStatus, getChallenge, expireChallenge, type Challenge } from "@/lib/friend-challenges"
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Loader2 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 
-export default function ChallengeWaitingPage() {
+function ChallengeWaitingContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { userProfile } = useAuth()
@@ -133,5 +133,22 @@ export default function ChallengeWaitingPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function ChallengeWaitingPage() {
+  return (
+    <Suspense fallback={
+      <div className="w-full max-w-7xl mx-auto p-4 flex items-center justify-center min-h-screen">
+        <Card>
+          <CardContent className="p-8">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+            <p>Loading challenge...</p>
+          </CardContent>
+        </Card>
+      </div>
+    }>
+      <ChallengeWaitingContent />
+    </Suspense>
   )
 }
