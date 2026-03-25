@@ -48,6 +48,10 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
 
         setTimeLeft(remaining)
       }
+
+      if (updatedMatch.status === "completed") {
+        setTimeLeft(0)
+      }
     })
 
     return () => unsubscribe()
@@ -79,6 +83,13 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
       return () => clearInterval(timer)
     }
   }, [match, gameEnded])
+
+  // Ensure gameEnded syncs with status
+  useEffect(() => {
+    if (match?.status === "completed" && !gameEnded) {
+      setGameEnded(true)
+    }
+  }, [match?.status, gameEnded])
 
   if (!match) {
     return (
@@ -180,14 +191,7 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
     )
   }
 
-  const showResults = gameEnded || match.status === "completed"
-
-  // Ensure gameEnded syncs with status
-  useEffect(() => {
-    if (match.status === "completed" && !gameEnded) {
-      setGameEnded(true)
-    }
-  }, [match.status, gameEnded])
+  const showResults = gameEnded || (match && match.status === "completed")
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-6 relative">
