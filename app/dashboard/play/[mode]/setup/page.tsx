@@ -128,8 +128,8 @@ export default function GameSetupPage() {
         throw new Error(result.error)
       }
 
-      // Set shareable link using the real challenge ID
-      setChallengeLink(`${window.location.origin}/challenge/${result.challengeId}`)
+      // Redirect immediately to the challenge page (host view)
+      router.push(`/challenge/${result.challengeId}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create challenge")
     }

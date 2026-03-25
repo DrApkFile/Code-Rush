@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import { Loader2 } from "lucide-react"
 import { listenToMatch, updateMatchPlayerAnswer, completeMatch, appendMatchQuestions, updateMatchPlayerReady, startMatch, type Match } from "@/lib/multiplayer-queries"
 import { useAuth } from "@/lib/auth-context"
 import FriendResultsModal from "./friend-results-modal"
@@ -21,8 +22,27 @@ export default function FriendGameArena({ matchId }: FriendGameArenaProps) {
   const [gameEnded, setGameEnded] = useState(false)
   const [playerNumber, setPlayerNumber] = useState<1 | 2>(1)
   const [lastResult, setLastResult] = useState<"correct" | "wrong" | null>(null)
+  const [showSlowConnection, setShowSlowConnection] = useState(false)
   const hasInitialized = useRef(false)
   const feedbackTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Robust mode detection: check all common field names
+  const rawMode = match?.challengeMode || match?.gameMode || match?.mode
+  const isSurvival = String(rawMode || "").replace("-", "").toLowerCase() === "survival"
+
+  // Debug logging for mode detection
+  useEffect(() => {
+    if (match) {
+      console.log('[Arena] Mode Detection:', {
+        matchId,
+        mode: match.mode,
+        challengeMode: match.challengeMode,
+        gameMode: match.gameMode,
+        isSurvival,
+        rawMode
+      })
+    }
+  }, [match, isSurvival, rawMode, matchId])
 
   // Setup initial state
   useEffect(() => {
@@ -42,13 +62,13 @@ export default function FriendGameArena({ matchId }: FriendGameArenaProps) {
     }
 
     // Calculate time based on mode
-    const rawMode = match.challengeMode || match.mode
-    console.log('[Arena] Initializing with mode:', rawMode)
+    const rawModeVal = match.challengeMode || match.gameMode || match.mode
+    console.log('[Arena] Initializing with mode:', rawModeVal)
 
     // Safety check: if mode is "friend", it's not a duration
     let modeTime = 3 // Default
-    if (rawMode) {
-      const modeStr = String(rawMode).replace("-", "")
+    if (rawModeVal) {
+      const modeStr = String(rawModeVal).replace("-", "").toLowerCase()
       if (modeStr === "3min") modeTime = 3
       else if (modeStr === "5min") modeTime = 5
       else if (modeStr === "survival") modeTime = 999
@@ -123,18 +143,39 @@ export default function FriendGameArena({ matchId }: FriendGameArenaProps) {
   useEffect(() => {
     if (!match || !gameStarted || gameEnded) return
 
-    // If we are close to end (e.g. 5 questions left), load more
-    if (match.questions.length - currentQuestionIndex <= 5 && !loadingMoreRef.current) {
+    // If we are close to end (e.g. 10 questions left), load more
+    if (match.questions.length - currentQuestionIndex <= 10 && !loadingMoreRef.current) {
       loadingMoreRef.current = true
-      console.log('[Arena] Triggering append questions...')
-      appendMatchQuestions(matchId, match.language, 10).then(() => {
+      console.log('[Arena] Triggering early append questions (latency tolerance)...')
+      appendMatchQuestions(matchId, match.language, 20).then(() => {
         loadingMoreRef.current = false
       })
     }
-  }, [currentQuestionIndex, match?.questions?.length, gameStarted, gameEnded])
+  }, [currentQuestionIndex, match?.questions?.length, gameStarted, gameEnded, matchId, match?.language])
+
+  // Auto-advance in friend mode when new questions arrive and we're at the end
+  useEffect(() => {
+    if (!gameEnded && gameStarted && !lastResult) {
+      const hasAnsweredCurrent = selectedAnswers[currentQuestionIndex] !== null && selectedAnswers[currentQuestionIndex] !== undefined
+      const hasNextQuestion = currentQuestionIndex < (match?.questions?.length || 0) - 1
+
+      // If we answered the last question of the current batch but more have since arrived, go to them
+      if (hasAnsweredCurrent && hasNextQuestion) {
+        console.log('[Arena] Auto-advancing to next question batch...')
+        setCurrentQuestionIndex(prev => prev + 1)
+      }
+    }
+  }, [match?.questions?.length, gameEnded, gameStarted, lastResult, selectedAnswers, currentQuestionIndex])
 
   const handleAnswerQuestion = async (answerIndex: number) => {
     if (!match || !!lastResult) return
+
+    // CRITICAL: Prevent duplicate scoring exploit
+    const alreadyAnswered = selectedAnswers[currentQuestionIndex] !== null && selectedAnswers[currentQuestionIndex] !== undefined
+    if (alreadyAnswered) {
+      console.warn('[Arena] Question already answered. Ignoring duplicate click.')
+      return
+    }
 
     const currentQuestion = match.questions[currentQuestionIndex]
     const isCorrect = answerIndex === currentQuestion.correctAnswerIndex
@@ -156,49 +197,9 @@ export default function FriendGameArena({ matchId }: FriendGameArenaProps) {
       setLastResult(null)
       if (currentQuestionIndex < match.questions.length - 1) {
         setCurrentQuestionIndex((prev) => prev + 1)
-      } else {
-        setGameEnded(true)
       }
+      // Never auto-end based on question count in friend mode
     }, 650)
-  }
-
-  const handleSkipQuestion = async () => {
-    if (!match) return
-
-    // Mark as skipped (answer = null, isCorrect = false)
-    const newAnswers = [...selectedAnswers]
-    newAnswers[currentQuestionIndex] = null
-    setSelectedAnswers(newAnswers)
-
-    // Record the skip as a wrong answer in Firestore
-    await updateMatchPlayerAnswer(matchId, playerNumber, currentQuestionIndex, null, false)
-
-    // Move to next question
-    if (currentQuestionIndex < match.questions.length - 1) {
-      setCurrentQuestionIndex((prev) => prev + 1)
-    } else {
-      setGameEnded(true)
-    }
-  }
-
-  const handleNavigateNext = async () => {
-    if (!match) return
-
-    // If current question is unanswered, mark it as skipped
-    if (selectedAnswers[currentQuestionIndex] === null || selectedAnswers[currentQuestionIndex] === undefined) {
-      await handleSkipQuestion()
-    } else {
-      // Move to next question
-      if (currentQuestionIndex < match.questions.length - 1) {
-        setCurrentQuestionIndex((prev) => prev + 1)
-      }
-    }
-  }
-
-  const handleNavigatePrev = () => {
-    if (currentQuestionIndex > 0) {
-      setCurrentQuestionIndex((prev) => prev - 1)
-    }
   }
 
   const handleGameEnd = async () => {
@@ -222,10 +223,34 @@ export default function FriendGameArena({ matchId }: FriendGameArenaProps) {
     setGameEnded(true)
   }
 
+  // Monitor loading and synchronization for slow connection
+  useEffect(() => {
+    let timeout: NodeJS.Timeout
+    const isLoading = !match || (gameStarted && !gameEnded && !match.questions?.[currentQuestionIndex])
+
+    if (isLoading) {
+      timeout = setTimeout(() => {
+        setShowSlowConnection(true)
+      }, 5000)
+    } else {
+      setShowSlowConnection(false)
+    }
+
+    return () => clearTimeout(timeout)
+  }, [match, gameStarted, gameEnded, currentQuestionIndex])
+
   if (!match) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-lg text-muted-foreground">Loading game...</p>
+      <div className="flex flex-col items-center justify-center min-h-screen space-y-4">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <div className="text-center">
+          <p className="text-lg font-medium">Loading game...</p>
+          {showSlowConnection && (
+            <p className="text-sm text-muted-foreground animate-pulse">
+              Slow internet connection detected... please wait
+            </p>
+          )}
+        </div>
       </div>
     )
   }
@@ -252,7 +277,24 @@ export default function FriendGameArena({ matchId }: FriendGameArenaProps) {
     )
   }
 
-  const question = match.questions[currentQuestionIndex]
+  const question = match.questions?.[currentQuestionIndex]
+
+  if (gameStarted && !gameEnded && !question) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background space-y-4">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <div className="text-center">
+          <p className="text-xl font-bold">Preparing questions...</p>
+          <p className="text-muted-foreground text-sm">Synchronization in progress</p>
+          {showSlowConnection && (
+            <p className="text-xs text-muted-foreground animate-pulse mt-2">
+              Retrieving questions... slow connection
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-background p-4">
@@ -353,32 +395,14 @@ export default function FriendGameArena({ matchId }: FriendGameArenaProps) {
             })}
           </div>
 
-          {/* Navigation */}
-          <div className="flex justify-between">
-            <button
-              onClick={handleNavigatePrev}
-              disabled={currentQuestionIndex === 0}
-              className="px-4 py-2 border border-border rounded-lg hover:bg-muted disabled:opacity-50"
-            >
-              Previous
-            </button>
-
-            {currentQuestionIndex === match.questions.length - 1 ? (
-              <button
-                onClick={handleGameEnd}
-                className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
-              >
-                Submit
-              </button>
-            ) : (
-              <button
-                onClick={handleNavigateNext}
-                className="px-4 py-2 border border-border rounded-lg hover:bg-muted"
-              >
-                Next
-              </button>
-            )}
-          </div>
+          {/* Navigation - REMOVED FOR COMPETITIVE FAIRNESS */}
+          {/* We only show a loading state if we're at the very last question of the current batch */}
+          {currentQuestionIndex === match.questions.length - 1 && (
+            <div className="flex items-center justify-center gap-2 p-4 text-muted-foreground italic text-sm bg-muted/30 rounded-lg animate-pulse">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              <span>Fetching more questions... get ready!</span>
+            </div>
+          )}
         </div>
       </div>
     </div>

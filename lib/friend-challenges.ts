@@ -1,6 +1,6 @@
 import { collection, doc, addDoc, getDoc, updateDoc, onSnapshot, query, where, getDocs, deleteDoc, orderBy, limit } from "firebase/firestore"
 import { db } from "./firebase"
-import { fetchRandomQuestions } from "./game-queries"
+import { fetchRandomQuestions, getCachedQuestions } from "./game-queries"
 import { createNotification } from "./friends-queries"
 import { LanguageRatings } from "./multiplayer-queries"
 
@@ -103,7 +103,13 @@ export async function acceptChallenge(
 
     // Create match document
     const formatArg = challenge.questionFormat === "all" ? undefined : challenge.questionFormat
-    const questions = await fetchRandomQuestions(challenge.language, formatArg, 10)
+
+    // Optimized: Check cache first for faster start
+    const cached = await getCachedQuestions(challenge.language, formatArg)
+    const questions = cached.length >= 20
+      ? cached.slice(0, 20)
+      : await fetchRandomQuestions(challenge.language, formatArg, 20)
+
     const matchRef = collection(db, "matches")
     const match = {
       challengeId,
@@ -134,9 +140,8 @@ export async function acceptChallenge(
       challengeMode: challenge.mode, // Store the specific mode (3min, 5min, survival)
       isRated: challenge.isRated,
       questions,
-      status: "in_progress",
+      status: "waiting",
       createdAt: Date.now(),
-      startedAt: Date.now(),
     }
 
     const matchDocRef = await addDoc(matchRef, match)
@@ -165,13 +170,20 @@ export async function acceptChallenge(
 // Get challenge by ID
 export async function getChallenge(challengeId: string): Promise<Challenge | null> {
   try {
-    const challengeSnap = await getDoc(doc(db, "challenges", challengeId))
+    const cleanId = challengeId.trim()
+    console.log(`[v0] getChallenge called for ID: "${cleanId}"`)
+    const challengeSnap = await getDoc(doc(db, "challenges", cleanId))
+
     if (challengeSnap.exists()) {
-      return { id: challengeSnap.id, ...challengeSnap.data() } as Challenge
+      console.log(`[v0] getChallenge: Found document for ${cleanId}`)
+      return { ...challengeSnap.data(), id: challengeSnap.id } as Challenge
+    } else {
+      console.warn(`[v0] getChallenge: Document NOT FOUND for ${cleanId}`)
+      return null
     }
-    return null
-  } catch (error) {
-    console.error("[v0] Error getting challenge:", error)
+  } catch (error: any) {
+    console.error(`[v0] Error getting challenge "${challengeId}":`, error)
+    if (error.code) console.error(`[v0] Error code: ${error.code}`)
     return null
   }
 }
@@ -183,7 +195,7 @@ export async function getChallengeByMatchId(matchId: string): Promise<Challenge 
     const snaps = await getDocs(q)
     if (snaps.empty) return null
     const d = snaps.docs[0]
-    return { id: d.id, ...d.data() } as Challenge
+    return { ...d.data(), id: d.id } as Challenge
   } catch (error) {
     console.error("[v0] Error getting challenge by matchId:", error)
     return null
@@ -193,16 +205,25 @@ export async function getChallengeByMatchId(matchId: string): Promise<Challenge 
 // Listen to challenge updates in real-time
 export function listenToChallenge(challengeId: string, callback: (challenge: Challenge | null) => void): () => void {
   try {
-    const unsubscribe = onSnapshot(doc(db, "challenges", challengeId), (snapshot) => {
-      if (snapshot.exists()) {
-        callback({ id: snapshot.id, ...snapshot.data() } as Challenge)
-      } else {
-        callback(null)
+    const cleanId = challengeId.trim()
+    console.log(`[v0] listenToChallenge starting for ID: "${cleanId}"`)
+    const unsubscribe = onSnapshot(doc(db, "challenges", cleanId),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          console.log(`[v0] listenToChallenge: Snapshot received for ${cleanId}`)
+          callback({ ...snapshot.data(), id: snapshot.id } as Challenge)
+        } else {
+          console.warn(`[v0] listenToChallenge: Snapshot DOES NOT EXIST for ${cleanId}`)
+          callback(null)
+        }
+      },
+      (error) => {
+        console.error(`[v0] listenToChallenge ERROR for ${cleanId}:`, error)
       }
-    })
+    )
     return unsubscribe
   } catch (error) {
-    console.error("[v0] Error listening to challenge:", error)
+    console.error(`[v0] listenToChallenge FATAL ERROR for ${challengeId}:`, error)
     return () => { }
   }
 }
@@ -325,24 +346,26 @@ export async function createFriendChallenge(
       isRated,
       status: "pending",
       createdAt: Date.now(),
-      expiresAt: Date.now() + 2 * 60 * 1000, // 2 minute expiry
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hour expiry
     }
 
     const docRef = await addDoc(challengeRef, challengeDoc)
     const challengeId = docRef.id
 
-    // Create notification for friend
-    try {
-      const notifId = await createNotification(
-        friendId,
-        "challenge_received",
-        creatorId,
-        creatorUsername,
-        { mode, language, challengeId },
-      )
-      await updateDoc(docRef, { notificationId: notifId })
-    } catch (notifErr) {
-      console.error("[v0] Error creating challenge notification:", notifErr)
+    // Create notification for friend (if specified)
+    if (friendId) {
+      try {
+        const notifId = await createNotification(
+          friendId,
+          "challenge_received",
+          creatorId,
+          creatorUsername,
+          { mode, language, challengeId },
+        )
+        await updateDoc(docRef, { notificationId: notifId })
+      } catch (notifErr) {
+        console.error("[v0] Error creating challenge notification:", notifErr)
+      }
     }
 
     console.log(`[v0] Friend challenge created: ${challengeId}`)

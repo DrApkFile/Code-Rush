@@ -76,6 +76,7 @@ export default function GamePage() {
   const [prevRatingValue, setPrevRatingValue] = useState<number | null>(null)
   const [newRatingValue, setNewRatingValue] = useState<number | null>(null)
   const [lastResult, setLastResult] = useState<"correct" | "wrong" | null>(null)
+  const [showSlowConnection, setShowSlowConnection] = useState(false)
   const [showConfirmExit, setShowConfirmExit] = useState(false)
   const [exitSource, setExitSource] = useState<"back" | "reload" | "button" | null>(null)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
@@ -296,6 +297,19 @@ export default function GamePage() {
       initGame()
     }
   }, [user, actualLanguage, mode])
+
+  // Monitor loading for slow connection
+  useEffect(() => {
+    let timeout: NodeJS.Timeout
+    if (loading) {
+      timeout = setTimeout(() => {
+        setShowSlowConnection(true)
+      }, 5000)
+    } else {
+      setShowSlowConnection(false)
+    }
+    return () => clearTimeout(timeout)
+  }, [loading])
 
   // Timer logic and periodic sync
   useEffect(() => {
@@ -920,8 +934,16 @@ export default function GamePage() {
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-secondary">
-        <Loader2 className="h-8 w-8 animate-spin" />
+      <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-background to-secondary space-y-4">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <div className="text-center">
+          <p className="text-lg font-medium">Retrieving questions...</p>
+          {showSlowConnection && (
+            <p className="text-sm text-muted-foreground animate-pulse">
+              Slow internet connection detected... please wait
+            </p>
+          )}
+        </div>
       </main>
     )
   }

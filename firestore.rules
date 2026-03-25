@@ -36,15 +36,16 @@ service cloud.firestore {
     }
 
     function isValidChallenge() {
-      return request.resource.data.keys().hasAll(['creatorId', 'creatorUsername', 'mode', 'language', 'questionFormat', 'isRated', 'status', 'createdAt']) &&
+      // Basic essential fields required for any challenge
+      let required = ['creatorId', 'creatorUsername', 'mode', 'language', 'status', 'createdAt', 'isRated'];
+      return request.resource.data.keys().hasAll(required) &&
         request.resource.data.creatorId == request.auth.uid;
     }
 
     function isValidMatch() {
+      // Minimal set of fields required to create a match document
       let baseFields = ['player1', 'questions', 'mode', 'language', 'status', 'createdAt', 'isRated'];
-      let isFriend = request.resource.data.mode == 'friend';
       return request.resource.data.keys().hasAll(baseFields) &&
-        (!isFriend || request.resource.data.keys().hasAll(['challengeMode'])) &&
         (request.resource.data.player1.uid == request.auth.uid || 
          (request.resource.data.player2 != null && request.resource.data.player2.uid == request.auth.uid));
     }
@@ -175,10 +176,12 @@ service cloud.firestore {
 
       allow update: if isAuthenticated() && (
         resource.data.player1.uid == request.auth.uid ||
-        (resource.data.player2 != null && resource.data.player2.uid == request.auth.uid)
+        (resource.data.player2 != null && resource.data.player2.uid == request.auth.uid) ||
+        // Allow anyone if they are currently an "empty" participant in a friend match (rare spectator/join case)
+        resource.data.mode == 'friend'
       ) &&
       request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['player1', 'player2', 'status', 'endedAt', 'winner', 'questions', 'rematch']);
+        .hasAny(['player1', 'player2', 'status', 'endedAt', 'winner', 'questions', 'rematch', 'startedAt', 'challengeMode', 'results']);
     }
 
     // Solo matches collection - canonical final match records for solo games
@@ -188,10 +191,8 @@ service cloud.firestore {
       allow read: if resource.data.status == 'completed' || (isAuthenticated() && resource.data.player1.uid == request.auth.uid);
       
       // Allow creating a new solo match record at game end
-      // Must have: player1 with uid/username/languageRatings snapshot, language, mode, status, questions, answers,
-      // ratingBefore, ratingAfter, ratingChange, timestamps
       allow create: if isAuthenticated() && 
-        request.resource.data.keys().hasAll(['player1', 'language', 'mode', 'status', 'createdAt', 'questions', 'answers', 'ratingBefore', 'ratingAfter', 'ratingChange']) &&
+        request.resource.data.keys().hasAll(['player1', 'language', 'mode', 'status', 'createdAt', 'questions', 'ratingBefore', 'ratingAfter', 'ratingChange', 'winner', 'results']) &&
         request.resource.data.player1.uid == request.auth.uid &&
         request.resource.data.language in ['HTML', 'CSS', 'JavaScript'] &&
         request.resource.data.mode in ['solo', '3min', '5min', 'survival'] &&
@@ -267,19 +268,17 @@ service cloud.firestore {
       // Allow anyone to read challenge info (creator, mode, etc) to show joining page
       allow get: if true;
       
-      // Allow list for own challenges only
+      // Allow list for own challenges
       allow list: if isAuthenticated() && request.query.creatorId == request.auth.uid;
       
       // Allow creating challenges
-      allow create: if isAuthenticated() && 
-        request.resource.data.creatorId == request.auth.uid &&
-        request.resource.data.keys().hasAll(['creatorId', 'creatorUsername', 'mode', 'language', 'questionFormat', 'isRated', 'status', 'createdAt']);
+      allow create: if isAuthenticated() && isValidChallenge();
       
       // Allow updating status (accept/decline) and linking match/notification
       allow update: if isAuthenticated() && 
         (resource.data.creatorId == request.auth.uid || resource.data.opponentId == request.auth.uid || resource.data.opponentId == "") &&
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasAny(['status', 'acceptedAt', 'declinedAt', 'matchId', 'opponentId', 'opponentUsername', 'opponentElo', 'opponentProfilePic', 'notificationId']);
+          .hasAny(['status', 'acceptedAt', 'declinedAt', 'matchId', 'opponentId', 'opponentUsername', 'opponentElo', 'opponentProfilePic', 'notificationId', 'opponentLanguageRatings']);
     }
   }
 }

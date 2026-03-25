@@ -6,13 +6,13 @@ import { Card, CardContent } from "@/components/ui/card"
 import { getChallenge, getChallengeByMatchId, type Challenge } from "@/lib/friend-challenges"
 import { preloadQuestionsCache } from "@/lib/game-queries"
 import { useAuth } from "@/lib/auth-context"
-import { updateMatchPlayerReady } from "@/lib/multiplayer-queries"
+import { updateMatchPlayerReady, getMatch } from "@/lib/multiplayer-queries"
 
 export default function CountdownPage() {
   const router = useRouter()
   const params = useParams()
   const { userProfile } = useAuth()
-  const matchId = params.challengeId as string
+  const challengeId = params.challengeId as string
 
   const [countdown, setCountdown] = useState(3)
   const [loading, setLoading] = useState(true)
@@ -31,20 +31,50 @@ export default function CountdownPage() {
       }
 
       let c = null
-      if (challengeIdFromStorage) {
+      if (challengeId) {
+        console.log('[Countdown] Loading challenge by ID:', challengeId)
+        c = await getChallenge(challengeId)
+
+        if (!c) {
+          console.log('[Countdown] Challenge not found, checking if ID is a Match ID...')
+          // Match-as-Challenge fallback (Rematches)
+          const matchData = await getMatch(challengeId)
+          if (matchData) {
+            console.log('[Countdown] Found Match for ID, converting to pseudo-challenge')
+            c = {
+              id: matchData.id,
+              creatorId: matchData.player1.uid,
+              creatorUsername: matchData.player1.username,
+              creatorElo: matchData.player1.languageRatings?.JavaScript || 1200, // Fallback elo
+              creatorProfilePic: matchData.player1.profilePicture,
+              opponentId: matchData.player2?.uid || '',
+              opponentUsername: matchData.player2?.username,
+              mode: (matchData.challengeMode || matchData.mode || '3-min') as any,
+              language: matchData.language,
+              questionFormat: 'all', // We don't store this in Match but we can assume 'all' for rematches
+              isRated: matchData.isRated,
+              status: 'in_progress',
+              matchId: matchData.id,
+              createdAt: matchData.createdAt,
+              expiresAt: matchData.createdAt + 24 * 60 * 60 * 1000
+            } as Challenge
+          }
+        }
+      } else if (challengeIdFromStorage) {
+        console.log('[Countdown] Loading challenge from storage:', challengeIdFromStorage)
         c = await getChallenge(challengeIdFromStorage)
-      } else {
-        // Try to find challenge by matchId
-        c = await getChallengeByMatchId(matchIdFromUrl)
       }
 
+      if (!c) {
+        console.warn('[Countdown] Final Error: Could not resolve Challenge or Match for ID:', challengeId)
+      }
       setChallenge(c)
 
       // Start preloading questions
       if (c) {
         // Use the game's caching helper which stores questions in sessionStorage/IndexedDB
         const format = c.questionFormat === "all" ? undefined : (c.questionFormat as any)
-        const questions = await preloadQuestionsCache(c.language, format, 20)
+        const questions = await preloadQuestionsCache(c.language, format, 30)
         console.log(`[v0] Preloaded ${questions.length} questions during countdown`)
         setQuestionsLoaded(true)
       }
@@ -52,17 +82,17 @@ export default function CountdownPage() {
     }
 
     init()
-  }, [])
+  }, [challengeId, params.challengeId])
 
   useEffect(() => {
     if (countdown === 0) {
       // Set flag to avoid re-redirecting to countdown
       try {
-        sessionStorage.setItem(`countdown_seen_${matchId}`, "true")
+        sessionStorage.setItem(`countdown_seen_${challengeId}`, "true")
       } catch (e) { }
 
       // Redirect to challenge page which will now render the arena
-      router.push(`/challenge/${matchId}`)
+      router.push(`/challenge/${challengeId}`)
       return
     }
 
@@ -83,7 +113,7 @@ export default function CountdownPage() {
     }, 1000)
 
     return () => clearTimeout(timer)
-  }, [countdown, matchId, router, challenge, userProfile])
+  }, [countdown, challengeId, router, challenge, userProfile])
 
   return (
     <div className="w-full max-w-7xl mx-auto p-4 flex items-center justify-center min-h-screen bg-gradient-to-br from-primary/10 to-primary/5">
@@ -102,7 +132,7 @@ export default function CountdownPage() {
               <p>
                 <strong>{challenge.mode}</strong> • <strong>{challenge.language}</strong>
               </p>
-              <p>vs <strong>{challenge.opponentUsername}</strong></p>
+              <p>vs <strong>{challenge.opponentUsername || challenge.creatorUsername}</strong></p>
             </div>
           )}
         </CardContent>

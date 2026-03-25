@@ -12,7 +12,7 @@ import {
   orderBy,
 } from "firebase/firestore"
 import { db } from "./firebase"
-import { fetchRandomQuestions as fetchQuestionsFromGame } from "./game-queries"
+import { fetchRandomQuestions as fetchQuestionsFromGame, getCachedQuestions } from "./game-queries"
 import { calculateBothPlayersEloChange, updateLanguageRating } from "./rating-system"
 
 export { fetchRandomQuestions } from "./game-queries"
@@ -94,9 +94,9 @@ export async function appendMatchQuestions(
       ...(match.player2 ? { "player2.answers": p2Answers } : {})
     })
 
-    console.log(`[v0] Appended ${count} questions to match ${matchId}`)
+    console.log(`[v0] Appended ${count} questions to match ${matchId}. Total now: ${updatedQuestions.length}`)
   } catch (error) {
-    console.error("[v0] Error appending questions:", error)
+    console.error("[v0] Error appending questions for match:", matchId, error)
   }
 }
 
@@ -239,7 +239,12 @@ export async function createMatch(
   isRatedParam?: boolean
 ): Promise<string> {
   try {
-    const questions = await fetchQuestionsFromGame(language)
+    // Optimized: Check cache first for faster start
+    const formatArg = challengeMode === "all" ? undefined : (challengeMode as any)
+    const cached = await getCachedQuestions(language, formatArg)
+    const questions = cached.length >= 20
+      ? cached.slice(0, 20)
+      : await fetchQuestionsFromGame(language, formatArg, 20)
     const matchRef = collection(db, "matches")
     const match: Match = {
       id: "",
@@ -287,7 +292,7 @@ export function listenToMatch(matchId: string, callback: (match: Match) => void)
   try {
     const unsubscribe = onSnapshot(doc(db, "matches", matchId), (snapshot) => {
       if (snapshot.exists()) {
-        callback({ id: snapshot.id, ...snapshot.data() } as Match)
+        callback({ ...snapshot.data(), id: snapshot.id } as Match)
       }
     })
     return unsubscribe
@@ -313,12 +318,6 @@ export async function updateMatchPlayerAnswer(
 
     const match = matchSnap.data() as Match
     const playerKey = playerNumber === 1 ? "player1" : "player2"
-
-    // We use dot notation for nested updates to prevent overwriting the whole player object
-    // and correctly handle concurrent updates (fire and forget pattern)
-    const updates: any = {
-      [`${playerKey}.answers`]: new Array(match.questions.length).fill(null)
-    }
 
     // In practice, we just want to update THE SPECIFIC answer index if possible,
     // but Firestore updateDoc with arrays requires sending the whole array OR using arrayUnion.
@@ -473,7 +472,7 @@ export async function getMatch(matchId: string): Promise<Match | null> {
   try {
     const matchSnap = await getDoc(doc(db, "matches", matchId))
     if (matchSnap.exists()) {
-      return matchSnap.data() as Match
+      return { ...matchSnap.data(), id: matchSnap.id } as Match
     }
     return null
   } catch (error) {

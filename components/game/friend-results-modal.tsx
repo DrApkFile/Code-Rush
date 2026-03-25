@@ -39,6 +39,15 @@ export default function FriendResultsModal({ match }: FriendResultsModalProps) {
 
   // Coordinate Rematch Creation
   useEffect(() => {
+    if (!match) return
+    console.log('[ResultsModal] Rematch Sync Check:', {
+      matchId: match.id,
+      p1Requested: match.rematch?.player1,
+      p2Requested: match.rematch?.player2,
+      existingNewMatchId: match.rematch?.newMatchId,
+      isP1: isPlayer1
+    })
+
     if (match.rematch?.player1 && match.rematch?.player2 && !match.rematch.newMatchId && isPlayer1) {
       // Only Creator (P1) creates the game to avoid duplicates
       const create = async () => {
