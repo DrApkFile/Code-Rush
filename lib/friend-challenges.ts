@@ -9,13 +9,13 @@ export interface Challenge {
   creatorId: string
   creatorUsername: string
   creatorElo: number
-  creatorLanguageRatings?: LanguageRatings
-  creatorProfilePic?: string
-  opponentId?: string
-  opponentUsername?: string
-  opponentElo?: number
-  opponentLanguageRatings?: LanguageRatings
-  opponentProfilePic?: string
+  creatorLanguageRatings?: LanguageRatings | null
+  creatorProfilePic?: string | null
+  opponentId?: string | null
+  opponentUsername?: string | null
+  opponentElo?: number | null
+  opponentLanguageRatings?: LanguageRatings | null
+  opponentProfilePic?: string | null
   mode: "3-min" | "5-min" | "survival"
   language: "HTML" | "CSS" | "JavaScript"
   questionFormat: "MCQ" | "Fill in the Blank" | "Fix the Code" | "all"
@@ -49,9 +49,9 @@ export async function createChallenge(
       creatorId,
       creatorUsername,
       creatorElo,
-      creatorLanguageRatings,
-      creatorProfilePic,
-      opponentId,
+      creatorLanguageRatings: creatorLanguageRatings || null,
+      creatorProfilePic: creatorProfilePic || null,
+      opponentId: opponentId || null,
       mode,
       language,
       questionFormat,
@@ -93,10 +93,10 @@ export async function acceptChallenge(
     // Update challenge status
     await updateDoc(challengeRef, {
       opponentId,
-      opponentUsername,
-      opponentElo,
-      opponentLanguageRatings,
-      opponentProfilePic,
+      opponentUsername: opponentUsername || null,
+      opponentElo: opponentElo || 0,
+      opponentLanguageRatings: opponentLanguageRatings || null,
+      opponentProfilePic: opponentProfilePic || null,
       status: "accepted",
       acceptedAt: Date.now(),
     })
@@ -336,8 +336,8 @@ export async function createFriendChallenge(
       creatorId,
       creatorUsername,
       creatorElo,
-      creatorLanguageRatings,
-      creatorProfilePic,
+      creatorLanguageRatings: creatorLanguageRatings || null,
+      creatorProfilePic: creatorProfilePic || null,
       opponentId: friendId,
       opponentUsername: friendUsername,
       mode,

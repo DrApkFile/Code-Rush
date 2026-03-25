@@ -1,10 +1,10 @@
-import { 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  limit, 
-  and, 
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  limit,
+  and,
   orderBy,
   addDoc,
   updateDoc,
@@ -17,7 +17,7 @@ import { db } from "./firebase"
 export interface GameSession {
   id: string
   userId: string
-  mode: "3min" | "5min" | "survival"
+  mode: "3min" | "5min" | "survival" | "3-min" | "5-min" | "friend"
   language: string
   format?: string
   startTime: Date
@@ -55,7 +55,7 @@ export interface Question {
 interface ActiveGameSession {
   id: string
   userId: string
-  mode: "3min" | "5min" | "survival"
+  mode: "3min" | "5min" | "survival" | "3-min" | "5-min" | "friend"
   language: "HTML" | "CSS" | "JavaScript"
   score: number
   correctAnswers: number
@@ -73,7 +73,7 @@ function shuffleArray<T>(array: T[]): T[] {
   const shuffled = [...array]
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
-    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
   }
   return shuffled
 }
@@ -429,7 +429,7 @@ export async function updateGameSession(
 ): Promise<boolean> {
   let updateData: any = {}
   try {
-    
+
     if (update.endTime) updateData.endTime = serverTimestamp()
     if (update.score !== undefined) updateData.score = update.score
     if (update.questionsAnswered !== undefined) updateData.questionsAnswered = update.questionsAnswered
@@ -449,10 +449,11 @@ export async function updateGameSession(
     console.log("[v0] updateGameSession succeeded", sessionId)
     return true
   } catch (error) {
+    const e = error as any
     try {
       console.error("[v0] Error updating game session:", {
-        message: error?.message || error,
-        code: error?.code || null,
+        message: e?.message || e,
+        code: e?.code || null,
         sessionId,
         updateData,
       })
