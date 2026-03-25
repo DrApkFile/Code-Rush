@@ -17,7 +17,9 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
   const [match, setMatch] = useState<Match | null>(null)
   const [timeLeft, setTimeLeft] = useState(0)
   const [gameEnded, setGameEnded] = useState(false)
+  const [redirecting, setRedirecting] = useState(false)
   const hasInitialized = useRef(false)
+  const redirectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Listen to match updates
   useEffect(() => {
@@ -28,10 +30,15 @@ export default function SpectatorArena({ matchId, spectatorUsername }: Spectator
         setGameEnded(true)
       }
 
-      // Rematch redirection for spectators
-      if (updatedMatch.rematch?.newMatchId) {
-        console.log('[Spectator] Rematch detected! Redirecting to:', updatedMatch.rematch.newMatchId)
-        router.push(`/challenge/${updatedMatch.rematch.newMatchId}`)
+      // Rematch redirection for spectators with delay and notification
+      if (updatedMatch.rematch?.newMatchId && !redirecting) {
+        console.log('[Spectator] Rematch detected! Starting transition to:', updatedMatch.rematch.newMatchId)
+        setRedirecting(true)
+
+        // 3 second delay to let spectator see the results/notification
+        redirectTimeoutRef.current = setTimeout(() => {
+          router.push(`/challenge/${updatedMatch.rematch.newMatchId}`)
+        }, 3000)
       }
 
       // Calculate time for spectators - Sync with actual startedAt
